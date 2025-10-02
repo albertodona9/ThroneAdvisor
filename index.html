@@ -1,14 +1,56 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Hello World</title>
-  <link href='/style.css' rel='stylesheet'>
-</head>
-<body>
-  <h1>Hello, world!</h1>
-  <button onclick="console.log('hello');">Press me</button>
-  <script defer type="text/javascript" src="/main.js"></script>
-</body>
+  <head>
+    <meta
+      name="viewport"
+      id="vp"
+      content="initial-scale=1.0, width=device-width"
+    />
+    <meta charset="utf-8" />
+    <link
+      rel="stylesheet"
+      href="https://api.mazemap.com/js/v2.2.1/mazemap.min.css"
+    />
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <title>ThroneAdvisor</title>
+  </head>
+  <body>
+    <header class="fixed top-0 left-0 right-0 bg-white border-b shadow-sm z-50">
+      <div
+        class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between"
+      >
+        <h1 class="text-2xl md:text-2xl font-bold text-red-600">
+          ThroneAdvisor
+        </h1>
+        <a
+          href="ranking.html"
+          class="text-sm text-gray-600 hover:underline whitespace-nowrap"
+          >View Rankings →</a
+        >
+      </div>
+    </header>
+    <div id="map" class="mazemap"></div>
+    <div id="poidata" aria-hidden="true">
+      <div class="poidata-header flex justify-between items-center mb-4">
+        <div>
+          <h2 id="poi-title" class="text-xl font-semibold">Reviews</h2>
+          <div id="poi-subtitle" class="text-sm text-gray-500"></div>
+        </div>
+        <button
+          id="poidata-close"
+          class="text-gray-500 hover:text-gray-700 text-xl"
+          aria-label="Close reviews"
+        >
+          ✕
+        </button>
+      </div>
+      <hr class="mb-6" />
+      <div id="poi-content">
+        <div id="reviews"></div>
+      </div>
+    </div>
+    <script src="https://api.mazemap.com/js/v2.2.1/mazemap.min.js"></script>
+    <script type="module" src="main.js"></script>
+  </body>
 </html>
