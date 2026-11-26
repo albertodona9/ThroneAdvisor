@@ -1,0 +1,172 @@
+rules_version = '2';
+
+// ThroneAdvisor data model (one set of documents per campus):
+//
+//   campuses/{campus}/meta/stats                      one doc with every toilet's score sums
+//   campuses/{campus}/meta/live                       one doc with every toilet currently in use
+//   campuses/{campus}/toilets/{id}/reviews/{uid}      one review per user per toilet
+//
+// The map needs every toilet's score, so those live in ONE document: opening the app
+// costs a single read no matter how many toilets exist. There are no Cloud Functions,
+// so clients maintain the aggregates themselves and these rules make sure that every
+// change to an aggregate is backed by a matching review / check-in written in the same
+// batch. A client can never write an arbitrary score.
+//
+// The "in use" (live) document is optional: nobody has to check in. Visits are counted
+// when a user leaves a toilet they checked in to, or when they post a review and tick
+// "I used this toilet". The live document exists for a future live-availability feature.
+//
+// Aggregate writes carry two hint fields: `ref` (the toilet id being changed) and `at`
+// (must equal request.time, which proves the other documents were written in the same
+// batch). Rules cannot iterate over map keys, hence the hint.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /campuses/{campus} {
+
+      // ---- helpers ---------------------------------------------------------
+
+      function statsPath() {
+        return /databases/$(database)/documents/campuses/$(campus)/meta/stats;
+      }
+      function livePath() {
+        return /databases/$(database)/documents/campuses/$(campus)/meta/live;
+      }
+      function reviewPath(id, uid) {
+        return /databases/$(database)/documents/campuses/$(campus)/toilets/$(id)/reviews/$(uid);
+      }
+
+      function signedIn() {
+        return request.auth != null;
+      }
+      function isToiletId(id) {
+        return id is string && id.matches('^[0-9]{1,12}$');
+      }
+      function isScore(v) {
+        return v is int && v >= 1 && v <= 10;
+      }
+
+      // ---- stats: { t: { <id>: {n, p, c, k, v} }, ref, at } ----------------
+      // n = reviews, p/c/k = sums of privacy/cleanliness/comfort scores, v = visits
+
+      match /meta/stats {
+        allow get: if true;
+        allow create: if signedIn()
+          && request.resource.data.keys().hasOnly(['t'])
+          && request.resource.data.t.size() == 0;
+        allow update: if signedIn() && validStatsUpdate();
+      }
+
+      function validStatsUpdate() {
+        let d = request.resource.data;
+        let id = d.get('ref', '');
+        let zero = {'n': 0, 'p': 0, 'c': 0, 'k': 0, 'v': 0};
+        let b = resource.data.t.get(id, zero);
+        return isToiletId(id)
+          && d.keys().hasOnly(['t', 'ref', 'at'])
+          && d.at == request.time
+          && d.t.diff(resource.data.t).affectedKeys().hasOnly([id])
+          && d.t[id].keys().hasOnly(['n', 'p', 'c', 'k', 'v'])
+          && d.t[id].n is int && d.t[id].p is int && d.t[id].c is int
+          && d.t[id].k is int && d.t[id].v is int
+          && (reviewBacksStats(id, b, d.t[id]) || visitBacksStats(id, b, d.t[id]));
+      }
+
+      // The user's review doc in this same batch accounts for the exact change.
+      // Posting a review may also count as one visit ("I used this toilet").
+      function reviewBacksStats(id, b, a) {
+        let path = reviewPath(id, request.auth.uid);
+        let had = exists(path);
+        let old = had ? get(path).data : {'p': 0, 'c': 0, 'k': 0};
+        let r = getAfter(path).data;
+        return r.updatedAt == request.time
+          && (a.v == b.v || a.v == b.v + 1)
+          && a.n == b.n + (had ? 0 : 1)
+          && a.p == b.p + r.p - old.p
+          && a.c == b.c + r.c - old.c
+          && a.k == b.k + r.k - old.k;
+      }
+
+      // The user was checked in to this toilet, and the same batch checks them out.
+      function visitBacksStats(id, b, a) {
+        let occ = get(livePath()).data.occ;
+        let liveAfter = getAfter(livePath()).data;
+        return a.v == b.v + 1
+          && a.n == b.n && a.p == b.p && a.c == b.c && a.k == b.k
+          && id in occ
+          && occ[id].u == request.auth.uid
+          && request.time > occ[id].s + duration.value(20, 's')
+          && !(id in liveAfter.occ)
+          && liveAfter.at == request.time;
+      }
+
+      // ---- live: { occ: { <id>: {u, s, d} }, ref, at } ---------------------
+      // u = user, s = check-in time (server), d = minutes before it auto-expires
+
+      match /meta/live {
+        allow get: if true;
+        allow create: if signedIn()
+          && request.resource.data.keys().hasOnly(['occ'])
+          && request.resource.data.occ.size() == 0;
+        allow update: if signedIn() && validLiveUpdate();
+      }
+
+      function isExpired(o) {
+        return request.time > o.s + duration.value(o.d, 'm');
+      }
+      function validOccupancy(o) {
+        return o.keys().hasOnly(['u', 's', 'd'])
+          && o.u == request.auth.uid
+          && o.s == request.time
+          && o.d is int && o.d >= 1 && o.d <= 20;
+      }
+
+      function validLiveUpdate() {
+        let d = request.resource.data;
+        let id = d.get('ref', '');
+        let before = resource.data.occ;
+        return isToiletId(id)
+          && d.keys().hasOnly(['occ', 'ref', 'at'])
+          && d.at == request.time
+          && d.occ.diff(before).affectedKeys().hasOnly([id])
+          && (
+            // check out: remove your own entry
+            (!(id in d.occ) && id in before && before[id].u == request.auth.uid)
+            // check in: toilet is free, expired, or already yours
+            || (id in d.occ && validOccupancy(d.occ[id])
+                && (!(id in before) || before[id].u == request.auth.uid || isExpired(before[id])))
+          );
+      }
+
+      // ---- reviews ---------------------------------------------------------
+
+      match /toilets/{id}/reviews/{uid} {
+        allow get: if true;
+        // Page size is capped so nobody can scan the collection for a bill.
+        allow list: if request.query.limit <= 25;
+        allow create: if signedIn() && request.auth.uid == uid && isToiletId(id)
+          && validReview(request.resource.data)
+          && request.resource.data.createdAt == request.time
+          && statsTouched(id);
+        allow update: if signedIn() && request.auth.uid == uid
+          && validReview(request.resource.data)
+          && request.resource.data.createdAt == resource.data.createdAt
+          && statsTouched(id);
+        allow delete: if false;
+      }
+
+      function validReview(r) {
+        return r.keys().hasOnly(['p', 'c', 'k', 'text', 'createdAt', 'updatedAt'])
+          && r.keys().hasAll(['p', 'c', 'k', 'createdAt', 'updatedAt'])
+          && isScore(r.p) && isScore(r.c) && isScore(r.k)
+          && r.updatedAt == request.time
+          && (!('text' in r) || (r.text is string && r.text.size() >= 1 && r.text.size() <= 280));
+      }
+
+      function statsTouched(id) {
+        let s = getAfter(statsPath()).data;
+        return s.at == request.time && s.ref == id;
+      }
+    }
+  }
+}
