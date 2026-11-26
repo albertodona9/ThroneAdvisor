@@ -5,6 +5,9 @@ rules_version = '2';
 //   campuses/{campus}/meta/stats                      one doc with every toilet's score sums
 //   campuses/{campus}/meta/live                       one doc with every toilet currently in use
 //   campuses/{campus}/toilets/{id}/reviews/{uid}      one review per user per toilet
+//   campuses/{campus}/toilets/{id}/reviews/{uid}/likes/{liker}   one like (see below)
+//   campuses/{campus}/royals/{uid}                    public leaderboard record of a king / queen (all time)
+//   campuses/{campus}/weeks/{week}/royals/{uid}       the same, for one week (a new week = a fresh board)
 //   users/{uid}                                       a user's private profile (see below)
 //
 // The map needs every toilet's score, so those live in ONE document: opening the app
@@ -96,14 +99,14 @@ service cloud.firestore {
       }
 
       // The user's review doc in this same batch accounts for the exact change.
-      // Posting a review may also count as one visit ("I used this toilet").
+      // Posting a NEW review may also count as one visit ("I used this toilet"); editing it later can't, so it can't be farmed.
       function reviewBacksStats(id, b, a) {
         let path = reviewPath(id, request.auth.uid);
         let had = exists(path);
         let old = had ? get(path).data : {'p': 0, 'c': 0, 'k': 0};
         let r = getAfter(path).data;
         return r.updatedAt == request.time
-          && (a.v == b.v || a.v == b.v + 1)
+          && (a.v == b.v || (a.v == b.v + 1 && !had)) // only a NEW review can also count a visit, not a later edit
           && a.n == b.n + (had ? 0 : 1)
           && a.p == b.p + r.p - old.p
           && a.c == b.c + r.c - old.c
@@ -169,21 +172,197 @@ service cloud.firestore {
         allow list: if request.query.limit <= 25;
         allow create: if signedIn() && request.auth.uid == uid && isToiletId(id)
           && validReview(request.resource.data)
+          && request.resource.data.get('lk', 0) == 0
           && request.resource.data.createdAt == request.time
           && statsTouched(id);
-        allow update: if signedIn() && request.auth.uid == uid && (
-          // changing the scores / text: must come with the matching stats change
-          (validReview(request.resource.data)
-            && request.resource.data.createdAt == resource.data.createdAt
-            && statsTouched(id))
-          // changing only the displayed name / avatar (a profile rename): no stats involved
-          || validRename(request.resource.data)
+        allow update: if signedIn() && (
+          // the author editing their review. The like counter is never theirs to change.
+          (request.auth.uid == uid
+            && request.resource.data.get('lk', 0) == resource.data.get('lk', 0)
+            && (
+              // changing the scores / text: must come with the matching stats change
+              (validReview(request.resource.data)
+                && request.resource.data.createdAt == resource.data.createdAt
+                && statsTouched(id))
+              // changing only the displayed name / avatar (a profile rename): no stats involved
+              || validRename(request.resource.data)
+            ))
+          // somebody else liking / un-liking it
+          || validLike(id, uid)
         );
         allow delete: if false;
       }
 
+      // ---- likes: one small document per (review, liker) ---------------------------------
+      // The review carries a counter `lk`. It can only move by +1 together with the creation of
+      // the liker's own like document in the same batch, and by -1 together with its deletion, and a
+      // second like by the same person is just another write to an existing document, which is refused.
+      match /toilets/{id}/reviews/{author}/likes/{liker} {
+        allow create: if signedIn() && request.auth.uid == liker && liker != author && isToiletId(id)
+          && request.resource.data.keys().hasOnly(['at'])
+          && request.resource.data.at == request.time
+          && likeCountMoves(id, author, 1);
+        allow delete: if signedIn() && request.auth.uid == liker && resource != null
+          && likeCountMoves(id, author, -1);
+      }
+
+      function likePath(id, author, liker) {
+        return /databases/$(database)/documents/campuses/$(campus)/toilets/$(id)/reviews/$(author)/likes/$(liker);
+      }
+
+      function likeCountMoves(id, author, delta) {
+        let p = reviewPath(id, author);
+        return exists(p)
+          && getAfter(p).data.get('lk', 0) == get(p).data.get('lk', 0) + delta
+          && getAfter(p).data.get('lk', 0) >= 0;
+      }
+
+      // A non-author update of someone's review: only the counter changes, by exactly one, and it is
+      // backed by the liker's own like document appearing (+1) or disappearing (-1) in this batch.
+      function validLike(id, author) {
+        let d = request.resource.data;
+        let old = resource.data;
+        let delta = d.get('lk', 0) - old.get('lk', 0);
+        let lp = likePath(id, author, request.auth.uid);
+        return request.auth.uid != author
+          && d.diff(old).affectedKeys().hasOnly(['lk'])
+          && d.get('lk', 0) >= 0
+          && ((delta == 1 && !exists(lp) && existsAfter(lp))
+              || (delta == -1 && exists(lp) && !existsAfter(lp)));
+      }
+
+      // ---- royals: the public leaderboard record of each king / queen ---------------------
+      // campuses/{campus}/royals/{uid} = {name, emoji?, title?, born, n, ts?, x?}. n is the number of throning
+      // sessions: it can only grow by exactly one, and only in a batch that also counted one visit
+      // (which the stats rules verify), so it can't be set to an arbitrary number.
+      match /royals/{uid} {
+        allow get: if true;
+        allow list: if request.query.limit <= 50;
+        allow create: if signedIn() && request.auth.uid == uid
+          && validRoyal(request.resource.data)
+          && request.resource.data.n == 1
+          && visitBumped()
+          && triedOk(request.resource.data, {});
+        allow update: if signedIn() && request.auth.uid == uid
+          && validRoyal(request.resource.data)
+          && request.resource.data.born == resource.data.born
+          && (
+            // only the public identity changed (name / avatar / title): the counters stay as they are
+            (request.resource.data.n == resource.data.n && countersUnchanged(request.resource.data, resource.data))
+            // one more counted visit: one more session, and possibly one more toilet tried
+            || (request.resource.data.n == resource.data.n + 1 && visitBumped()
+                && triedOk(request.resource.data, resource.data))
+          );
+        allow delete: if signedIn() && request.auth.uid == uid;
+      }
+
+      // ---- weekly royals: campuses/{campus}/weeks/{week}/royals/{uid} = {name, emoji?, title?, n} ----
+      // The same record per ISO-style week (Monday to Sunday, Denmark time), so "resetting" the weekly
+      // leaderboard needs no scheduled job: a new week is simply a new, empty collection. {week} is
+      // weekNumber() of the current time, which the rules compute themselves, so a client can only ever
+      // write into the running week; past weeks are frozen. `n` moves by +1 together with one counted
+      // visit, exactly like the all-time record above.
+      match /weeks/{week}/royals/{uid} {
+        allow get: if true;
+        allow list: if request.query.limit <= 50;
+        allow create: if signedIn() && request.auth.uid == uid
+          && isCurrentWeek(week)
+          && validWeekly(request.resource.data)
+          && sameBorn(uid, request.resource.data)
+          && request.resource.data.n == 1
+          && visitBumped()
+          && triedOk(request.resource.data, {});
+        allow update: if signedIn() && request.auth.uid == uid
+          && isCurrentWeek(week)
+          && validWeekly(request.resource.data)
+          && sameBorn(uid, request.resource.data)
+          && request.resource.data.born == resource.data.born
+          && (
+            (request.resource.data.n == resource.data.n && countersUnchanged(request.resource.data, resource.data))
+            || (request.resource.data.n == resource.data.n + 1 && visitBumped()
+                && triedOk(request.resource.data, resource.data))
+          );
+        allow delete: if false;
+      }
+
+      function isCurrentWeek(week) {
+        return week.matches('^[0-9]{1,6}$') && int(week) == weekNumber(request.time);
+      }
+
+      function validWeekly(r) {
+        return r.keys().hasOnly(['name', 'emoji', 'title', 'born', 'n', 'ts', 'x'])
+          && r.keys().hasAll(['name', 'born', 'n'])
+          && validIdentity(r)
+          && r.born is timestamp && r.born <= request.time && r.born > timestamp.date(2024, 1, 1)
+          && r.n is int && r.n >= 1
+          && validTried(r);
+      }
+
+      // The weekly entry shows the same birth date as the all-time record (it breaks weekly ties: the oldest
+      // royal wins), so it can't be a different, older one made up for the week.
+      function sameBorn(uid, r) {
+        return r.born == getAfter(royalPath(uid)).data.born;
+      }
+
+      function royalPath(uid) {
+        return /databases/$(database)/documents/campuses/$(campus)/royals/$(uid);
+      }
+
+      // ---- "Throne Hoppers": how many different toilets a royal has tried -----------------
+      // `ts` is the set of toilets they have a counted session at, `x` its size (the number the board is
+      // ranked by). A toilet can only enter the set through a counted visit to exactly that toilet (the `ref`
+      // of this batch's stats change), once, and nothing ever leaves it, so x can't be set to a number of
+      // anyone's choosing. A visit to a toilet already in the set leaves both as they were. Records written
+      // before this existed have no ts/x at all, which counts as an empty set.
+      function validTried(r) {
+        return (!('ts' in r) || (r.ts is map && r.ts.size() <= 1000))
+          && (!('x' in r) || (r.x is int && r.x >= 0));
+      }
+
+      function countersUnchanged(r, old) {
+        return r.get('ts', {}) == old.get('ts', {}) && r.get('x', 0) == old.get('x', 0);
+      }
+
+      function triedOk(r, old) {
+        let ref = getAfter(statsPath()).data.ref;
+        let oldTs = old.get('ts', {});
+        let oldX = old.get('x', 0);
+        let ts = r.get('ts', {});
+        let x = r.get('x', 0);
+        return ts.size() <= 1000 && x == ts.size()
+          && ((ts == oldTs && x == oldX)
+              || (!(ref in oldTs) && ts.diff(oldTs).affectedKeys().hasOnly([ref])
+                  && ref in ts && ts[ref] == true && x == oldX + 1));
+      }
+
+      // The public name is either a chosen username (3-20) or a generated nickname (up to 30).
+      function validIdentity(r) {
+        return r.name is string
+          && r.name.matches('^[\\p{L}\\p{N}][\\p{L}\\p{N} _.-]{1,28}[\\p{L}\\p{N}]$')
+          && (!('emoji' in r) || allowedEmoji(r.emoji))
+          && (!('title' in r) || r.title in ['king', 'queen']);
+      }
+
+      function validRoyal(r) {
+        return r.keys().hasOnly(['name', 'emoji', 'title', 'born', 'n', 'ts', 'x'])
+          && r.keys().hasAll(['name', 'born', 'n'])
+          && validIdentity(r)
+          && r.born is timestamp && r.born <= request.time && r.born > timestamp.date(2024, 1, 1)
+          && r.n is int && r.n >= 1
+          && validTried(r);
+      }
+
+      // This same batch counted exactly one visit on one toilet in the campus stats.
+      function visitBumped() {
+        let after = getAfter(statsPath()).data;
+        let before = get(statsPath()).data;
+        return after.at == request.time
+          && after.t[after.ref].v == before.t.get(after.ref, {'v': 0}).v + 1;
+      }
+
       function validReview(r) {
-        return r.keys().hasOnly(['p', 'c', 'k', 'text', 'by', 'em', 'createdAt', 'updatedAt'])
+        return r.keys().hasOnly(['p', 'c', 'k', 'text', 'by', 'em', 'lk', 'createdAt', 'updatedAt'])
+          && (!('lk' in r) || (r.lk is int && r.lk >= 0))
           && r.keys().hasAll(['p', 'c', 'k', 'createdAt', 'updatedAt'])
           && isScore(r.p) && isScore(r.c) && isScore(r.k)
           && r.updatedAt == request.time
@@ -227,6 +406,14 @@ service cloud.firestore {
       return s.year() * 10000 + s.month() * 100 + s.day();
     }
 
+    // Number of the leaderboard week containing `t`: whole weeks since Monday 1970-01-05, in the same
+    // shifted clock as dayNumber(), so a week starts at about Monday midnight in Denmark.
+    // (4 days = 345600000 ms puts the Monday boundary right; 604800000 ms = 7 days.)
+    // Keep in sync with weekNumber() in src/profile.js.
+    function weekNumber(t) {
+      return math.floor((t.toMillis() + 3600000 - 345600000) / 604800000);
+    }
+
     // q = today's quick-visit allowance {d: day, n: used}. It may only stay as it is or move
     // forward on the current day, so it can't be reset by rewriting the document.
     function quotaOk(p, old) {
@@ -239,7 +426,9 @@ service cloud.firestore {
     }
 
     function validProfile(p) {
-      return p.keys().hasOnly(['name', 'emoji', 'rv', 'vs', 'q'])
+      return p.keys().hasOnly(['name', 'emoji', 'title', 'rv', 'vs', 'q', 'lk'])
+        && (!('title' in p) || p.title in ['king', 'queen'])
+        && (!('lk' in p) || (p.lk is map && p.lk.size() <= 2000))
         && (!('name' in p) || validName(p.name))
         && (!('emoji' in p) || allowedEmoji(p.emoji))
         && (!('rv' in p) || (p.rv is map && p.rv.size() <= 2000))

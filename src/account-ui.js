@@ -2,7 +2,7 @@
 import { errorMessage, loadProfile, updateProfile } from "./actions.js";
 import { authErrorMessage, logOut, saveWithGoogle, signInToExisting } from "./account.js";
 import { h, replaceChildren, toast } from "./dom.js";
-import { EMOJIS, displayName, nameProblem } from "./profile.js";
+import { EMOJIS, TITLES, displayName, formatBorn, nameProblem, titleIcon, titleLabel } from "./profile.js";
 import { state, subscribe } from "./store.js";
 
 const GOOGLE_G = `<svg viewBox="0 0 48 48" width="20" height="20" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.6 5.9c4.5-4.1 7-10.2 7-17.6z"/><path fill="#FBBC05" d="M10.5 28.7c-.5-1.4-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.4 0 20.1 0 24s.9 7.6 2.6 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.6-5.9c-2.1 1.4-4.9 2.3-8.3 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>`;
@@ -83,6 +83,9 @@ export function createAccountUI() {
 
   const closeButton = () => h("button", { class: "icon-btn", type: "button", "aria-label": "Close", onclick: close }, "✕");
   const shownName = () => displayName(state.uid ?? "", state.profile?.name);
+  /** "🤴 King · born 26 Nov 2026": the birth date is the day the account was created. */
+  const royalLine = () =>
+    h("p", { class: "royal-line" }, `${titleIcon(state.profile?.title)} ${titleLabel(state.profile?.title)}${state.account?.createdMs ? ` · born ${formatBorn(state.account.createdMs)}` : ""}`);
 
   function render() {
     if (view === "personalize") return renderPersonalize();
@@ -102,7 +105,7 @@ export function createAccountUI() {
           "div",
           { class: "profile" },
           avatarFor(a, "big"),
-          h("div", null, h("strong", null, shownName()), h("p", { class: "muted" }, a.email ?? "")),
+          h("div", null, h("strong", null, shownName()), h("p", { class: "muted" }, a.email ?? ""), royalLine()),
         ),
         h(
           "p",
@@ -126,6 +129,7 @@ export function createAccountUI() {
             `You're using ThroneAdvisor without an account, as “${shownName()}”. Your reviews are tied to this browser: clear its data or switch phones and you'd lose them. Save them to a Google account and they follow you everywhere.`,
           )
         : h("p", { class: "note" }, "Sign in to keep your reviews across devices. You can also just rate toilets without an account."),
+      anonymous ? royalLine() : null,
       googleButton(anonymous ? "Save my account with Google" : "Continue with Google", save, busy),
       anonymous
         ? h(
@@ -143,7 +147,7 @@ export function createAccountUI() {
 
   function renderPersonalize() {
     const current = state.profile ?? { name: null, emoji: null };
-    draft ??= { name: current.name ?? "", emoji: current.emoji ?? null };
+    draft ??= { name: current.name ?? "", emoji: current.emoji ?? null, title: current.title ?? null };
     const generated = displayName(state.uid ?? "", null);
 
     const preview = h("p", { class: "preview" });
@@ -162,6 +166,32 @@ export function createAccountUI() {
       },
     });
     input.value = draft.name;
+
+    const titleRow = h(
+      "div",
+      { class: "title-picker", role: "group", "aria-label": "Title" },
+      Object.entries(TITLES).map(([key, t]) =>
+        h(
+          "button",
+          {
+            class: `title-opt ${draft.title === key ? "picked" : ""}`,
+            type: "button",
+            "aria-pressed": draft.title === key,
+            "data-title": key,
+            onclick: () => {
+              draft.title = draft.title === key ? null : key; // tap again to go back to plain "Royal"
+              [...titleRow.children].forEach((b) => {
+                const on = b.dataset.title === draft.title;
+                b.classList.toggle("picked", on);
+                b.setAttribute("aria-pressed", String(on));
+              });
+              refresh();
+            },
+          },
+          `${t.icon} ${t.label}`,
+        ),
+      ),
+    );
 
     const grid = h(
       "div",
@@ -192,15 +222,15 @@ export function createAccountUI() {
       const bad = nameProblem(draft.name);
       problem.textContent = bad ?? "";
       const shown = draft.name.trim() || generated;
-      replaceChildren(preview, "Your reviews will show as ", h("strong", null, `${draft.emoji ? draft.emoji + " " : ""}${shown}`));
-      const changed = (draft.name.trim() || null) !== (current.name ?? null) || (draft.emoji ?? null) !== (current.emoji ?? null);
+      replaceChildren(preview, "Your reviews will show as ", h("strong", null, `${draft.emoji ? draft.emoji + " " : ""}${shown}`), ` · ${titleLabel(draft.title)} on the leaderboard`);
+      const changed = (draft.name.trim() || null) !== (current.name ?? null) || (draft.emoji ?? null) !== (current.emoji ?? null) || (draft.title ?? null) !== (current.title ?? null);
       saveBtn.disabled = busy || !!bad || !changed;
     }
 
     function onSave() {
       run(
         async () => {
-          await updateProfile({ name: draft.name.trim() || null, emoji: draft.emoji });
+          await updateProfile({ name: draft.name.trim() || null, emoji: draft.emoji, title: draft.title });
           toast("Profile saved ✓");
           view = "main";
           draft = null;
@@ -220,6 +250,7 @@ export function createAccountUI() {
       ),
       h("label", { class: "field" }, h("span", null, "Username"), input, problem),
       h("button", { class: "linklike", type: "button", onclick: () => ((draft.name = ""), (input.value = ""), refresh()) }, "Use my random name"),
+      h("div", { class: "field" }, h("span", null, "Title"), titleRow, h("span", { class: "hint" }, "Shown on the Royals leaderboard. Tap again to go back to plain “Royal”.")),
       h("div", { class: "field" }, h("span", null, "Avatar"), grid),
       preview,
       saveBtn,

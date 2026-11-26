@@ -27,6 +27,7 @@ function toAccount(user) {
     name: user.displayName ?? info?.displayName ?? null,
     email: user.email ?? info?.email ?? null,
     photoURL: user.photoURL ?? info?.photoURL ?? null,
+    createdMs: user.metadata?.creationTime ? Date.parse(user.metadata.creationTime) : null, // "born": when the account was created
   };
 }
 
@@ -40,6 +41,7 @@ export function initAccount() {
       if (state.checkIn) setCheckIn(null);
       clearCache(`profile.${state.uid}`); // don't leave their profile on a shared phone
       state.profile = null;
+      state.myRoyal = null; // which toilets *they* had tried
     }
     update({ uid, account: toAccount(user) });
     // Users who already have an account get their profile (name, avatar, history) loaded: one read.

@@ -9,7 +9,7 @@ export function tierBadge(score, { size = 46 } = {}) {
   if (!tier) return h("span", { class: "bubble", style: `background:${UNRATED_COLOR}`, title: "Not rated yet" }, "–");
   return h(
     "span",
-    { class: "tier-badge", style: `--size:${size}px`, title: `${tier.name} · Level ${tier.level} of 5` },
+    { class: "tier-badge", style: `--size:${size}px`, title: tier.name },
     h("img", { src: tier.image, alt: tier.name, width: size, height: size, decoding: "async" }),
     h("span", { class: "tier-score", style: `background:${tier.color}` }, formatScore(score)),
   );

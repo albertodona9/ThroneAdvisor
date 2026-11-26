@@ -1,4 +1,61 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "royals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "n",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "born",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "royals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "x",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "born",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "royals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "n",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "born",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "royals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "x",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "born",
+          "order": "DESCENDING"
+        }
+      ]
+    }
+  ],
   "fieldOverrides": []
 }

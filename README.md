@@ -2,12 +2,14 @@
 
 _TODO_
 
-[ ] Add possibility to install webapp
-[ ] Add info page with credits for developers
+[X] Add possibility to install webapp
+[X] Add info page with credits for developers
 [ ] Make kings/queens tab with users stats
 [ ] Make app a bit "less nice" with poops ratings based on the overalls (stinky, medium, excellent etc.)
-[ ] trophies for reviewers, add monthly leaderboards and yearly throne kings and queens
-[ ] login options and cache storing on the phone so no need to login each time
+[X] trophies for reviewers, add monthly leaderboards and yearly throne kings and queens
+[ ] Add the thropies room for each user with all time streak number and with badges for the weekly all time
+I am thinking of something like every season gets its own badge (based on crops or something like that) and the frame is either gold, silver or bronze based on the position.
+[X] login options and cache storing on the phone so no need to login each time
 [ ] Personal Heat Map of campus
 
 Find a free toilet on campus and rate how nice it is to sit in. Built for DTU Lyngby on top of
@@ -32,6 +34,13 @@ Find a free toilet on campus and rate how nice it is to sit in. Built for DTU Ly
   up to 2.0 **Peasant's Pot** · 2.1-4.0 **Commoner's Loo** · 4.1-6.0 **Noble's Rest** · 6.1-8.0 **Highness's Throne** · 8.1-10 **The King's Loo**.
   The tier follows the score as displayed (one decimal), and the map bubbles use the tier's colour. Toilets nobody has rated yet have no tier
   and show a grey "–". The ranges, names, colours and pictures all live in `src/tiers.js`.
+- **Likes.** Every review has a heart with a small counter. One like per person per review (you can't like your own), and you can take it back.
+- **Royals 👑.** A tab with two stacked sections, **This week** (starts over every Monday) and **All time**, each with a **top 3** in two categories:
+  🧻 **The Royal Flush** (the royals who expel the most: most throning sessions, i.e. counted visits: a quick log, a check-out, or a new review
+  with "I used this toilet") and 🗺️ **Throne Hoppers** (the royals who explore the most: most _different_ toilets used). Ties: in the weekly
+  boards the **oldest** royal wins, in the all-time boards the **youngest**, so nobody stays on top forever. Below each section your own
+  numbers are shown. In "Personalize profile" you choose to be a **King** or a **Queen** (or stay a plain "Royal"). Each royal also has a
+  **birth date**: the day their account was created, shown in the account window and on the Me tab (it is also what breaks ties).
 - **Swipe the bottom sheet.** Drag the list up to expand it and down to collapse it (it follows your finger and snaps; a quick flick decides the
   direction). It never fights with scrolling the list. Tapping the handle still works.
 
@@ -58,13 +67,14 @@ npm run toilets:fetch  # re-download the toilet list from MazeMap
 
 Firestore bills per document read, so the whole design is about reading few documents.
 
-| What                                                   | Where                                          | Cost                                                                     |
-| ------------------------------------------------------ | ---------------------------------------------- | ------------------------------------------------------------------------ |
-| Toilet locations, names, floors (876 toilets)          | Static JSON bundled with the app (`src/data/`) | **0 reads**                                                              |
-| Every toilet's score sums + visit counter              | One document: `campuses/{campus}/meta/stats`   | 1 read per refresh                                                       |
-| Who is in which toilet right now                       | One document: `campuses/{campus}/meta/live`    | 1 read per refresh                                                       |
-| Reviews                                                | `campuses/{campus}/toilets/{id}/reviews/{uid}` | ≤ 10 reads, only when someone opens that toilet (cached for the session) |
-| A user's profile: name, avatar, own reviews and visits | `users/{uid}` (private to its owner)           | 1 read per session, only for users who have an account/session           |
+| What                                                   | Where                                                         | Cost                                                                               |
+| ------------------------------------------------------ | ------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Toilet locations, names, floors (876 toilets)          | Static JSON bundled with the app (`src/data/`)                | **0 reads**                                                                        |
+| Every toilet's score sums + visit counter              | One document: `campuses/{campus}/meta/stats`                  | 1 read per refresh                                                                 |
+| Who is in which toilet right now                       | One document: `campuses/{campus}/meta/live`                   | 1 read per refresh                                                                 |
+| Reviews                                                | `campuses/{campus}/toilets/{id}/reviews/{uid}`                | ≤ 10 reads, only when someone opens that toilet (cached for the session)           |
+| A user's profile: name, avatar, own reviews and visits | `users/{uid}` (private to its owner)                          | 1 read per session, only for users who have an account/session                     |
+| Royals boards (4 top-3 lists: weekly and all-time)     | `campuses/{campus}/royals/{uid}`, `weeks/{week}/royals/{uid}` | 12 reads (+2 for your own two entries), only when the tab is opened, cached 20 min |
 
 Opening the app costs **2 reads** (**3** for a returning user, whose profile is loaded too), regardless of how many toilets exist. While the tab is visible it
 re-reads `live` every 2 min and `stats` every 5 min (see `src/config.js`; `live` is polled slowly because few people check in
@@ -79,6 +89,35 @@ documents (`by`, `em`), so other people's names on a toilet's reviews cost no ex
 letters/digits/spaces/`_.-`, 16 allowed avatars). Renaming rewrites the user's own reviews in one batch; the rules allow that
 without touching scores or stats. Reviews written before profiles existed aren't in `rv`, so they don't appear in "Me" until the
 review is edited.
+
+**Likes.** A like is a tiny document `campuses/{campus}/toilets/{id}/reviews/{author}/likes/{liker}`, and the review carries a counter `lk` that is
+shown for free with the reviews. The rules only let `lk` move by +1 together with the creation of the liker's own like document in the same batch
+(and by -1 with its deletion), so a second like is impossible (it would be a write to an existing document) and a count can't be set. Your profile
+keeps a mirror of what you liked (`lk`), so hearts are filled in without any extra reads. A like costs 3 writes (like, counter, your profile).
+
+**Royals.** The boards need public data, and profiles are private, so each king or queen has one small public record,
+`campuses/{campus}/royals/{uid}` = `{name, emoji?, title?, born, n, ts?, x?}`: `n` is the number of throning sessions, `ts` the set of toilets they have
+used (`{toiletId: true}`) and `x` its size. It is written in the same batch as every counted visit, and the rules accept `n` +1 **only** if that batch also
+counted exactly one visit in the campus stats, and `x` +1 **only** if `ts` gains exactly the toilet of that visit (once; nothing can be removed), so neither
+number can be set to a figure of your choosing. The birth date can't change afterwards and comes from the Firebase account's creation time.
+A record holds at most 1,000 toilets. Limits, so nobody is surprised: records start counting from the day this shipped (earlier visits are in your Me tab
+but not on the boards; see the backfill script below); a new account can be made for free, so the boards are best-effort fair, not tamper-proof (App Check
+keeps scripts out); counted visits can also come from check-in/out (at least 20 s apart) which has no daily cap yet; and editing a review no longer adds
+a visit (only a new review can). "Tried" means any logged session at that toilet, not only reviewed ones.
+
+**Weekly royals.** The same record per week, `campuses/{campus}/weeks/{week}/royals/{uid}` = `{name, emoji?, title?, born, n, ts?, x?}`, written in the same
+batch as the all-time one (so one more write per counted visit, and no extra reads). The weekly `born` must equal the all-time one (the rules check it),
+because it breaks the weekly ties too. `{week}` is `weekNumber()` (whole weeks since Monday 1970-01-05, shifted like the daily limit so a week starts at
+about Monday midnight in Denmark; `src/profile.js`, mirrored in `firestore.rules`). The rules compute the current week from the server time and refuse
+writes to any other, so **nothing has to be reset**: a new week is simply a new, empty collection, and finished weeks are frozen. Limit: a phone whose
+clock is more than a few seconds off around the Sunday-night boundary (or days off) computes the wrong week, and the rules then refuse the whole counted visit.
+
+**Reading the boards.** Each board is one query (`orderBy(n or x, desc)`, then `orderBy(born)`, `limit(3)`), so the database does the ranking and the
+tie-break: weekly boards sort `born` ascending (oldest first), all-time boards descending (youngest first). That is four queries of 3 reads = 12 reads
+(`fetchBoards` in `src/api.js`, cached 20 minutes by `src/royals.js`; your own visits refresh it), plus 2 reads for your own two entries when you
+aren't on a podium. These queries need **four composite indexes** (`royals`, collection-group, fields `n`/`x` descending + `born` ascending/descending),
+declared in `firestore.indexes.json`; `npm run deploy` creates them, and the tab shows an error until they have finished building in production
+(the emulator doesn't need them).
 
 **Quick logs and the daily limit.** A quick log is one batch of two writes (the toilet's counter in `stats`, plus your profile), so it costs
 nothing beyond a normal review. The limit of 3 a day is kept in your own profile as `q: {d: day, n: used}` and **enforced by the security
@@ -124,6 +163,18 @@ The "in use" state expires by itself (10 min) so a forgotten check-in never bloc
   Turn on **Firebase App Check** before the public launch.
 - `stats` and `live` are single documents: Firestore sustains about 1 write/second per document, and a document is limited
   to 1 MiB (≈ 10,000 toilets). Both are fine for a campus; shard by building if a campus ever outgrows that.
+- Firestore also allows at most 40,000 index entries per document, and map fields are indexed by default. Each toilet that has been reviewed or
+  visited adds about 6 fields to `stats` (twice that in index entries, ascending and descending), so `stats` may hit that limit at roughly
+  3,000 active toilets, before the 1 MiB one. This is an estimate and hasn't been tested. A single-field index exemption on `meta/stats`
+  and `meta/live` (in `firestore.indexes.json`) should lift it; sharding by area (e.g. geohash cells) avoids it for good.
+- **No Cloud Functions on purpose.** They need the pay-as-you-go **Blaze** plan (a card on file, and no hard spending cap: a budget alert only
+  emails). Anything that "has to run on a schedule" is designed away instead: the weekly leaderboard resets by switching to a new `weeks/{week}`
+  collection, and the all-time board is kept up by the client under the rules. What this can't do is anything that needs trusted server
+  code, such as crowning a winner, sending notifications or moderating user-added toilets. If you need that, either move to Blaze with a budget
+  alert, or run a scheduled GitHub Actions job with the Admin SDK (free for public repos; use keyless Workload Identity Federation, never a key in the repo).
+- Going city-wide: the single `stats` / `live` documents would hit the write-rate and size limits, so they would have to be split by area
+  (e.g. geohash cells, loading only the cells in view, which is a few reads instead of two). User-added toilets would also need moderation,
+  which these rules alone can't do (an "unconfirmed until a second user confirms it" state and a report button are the usual first steps).
 - Reviews can be edited but not deleted yet (deleting would need the aggregate to be decremented, which the rules don't allow yet).
 
 ## Accounts
@@ -137,8 +188,8 @@ scale). Code: `src/account.js` (auth logic), `src/account-ui.js` (button, accoun
 `throneadvisor-0.web.app` and `throneadvisor-0.firebaseapp.com` are authorised sign-in domains by default; add your own domain under
 Authentication -> Settings if you use one. Locally the Auth emulator provides a fake Google popup, so it works without any setup.
 
-Not built yet: Microsoft sign-in (DTU students have Microsoft accounts; needs an Azure app registration), a public profile page and
-leaderboards (a user's numbers are private for now; public ones need a server-verified aggregate to be trustworthy), and moderation
+Not built yet: Microsoft sign-in (DTU students have Microsoft accounts; needs an Azure app registration), a public profile page (a user's
+own numbers are private; only the name, avatar, title and session counts on the royals boards are public), and moderation
 of usernames (they are validated for format only, not for content).
 
 ## Credentials and safety
@@ -172,6 +223,33 @@ To publish a new version: `npm run deploy` (builds, then deploys hosting + Fires
 To redeploy only the rules: `firebase deploy --only firestore`. The `stats` and `live` documents are created by the first
 write; no seeding is needed (never run `npm run seed` against production, it only targets the emulator).
 
+### Crediting visits from before the leaderboards (one-off)
+
+Reviews, scores and profiles need no migration: their structure didn't change (`lk` on a review and `title` on a profile are optional). The
+leaderboards simply start empty, because the rules only let a record's `n` grow by one together with a counted visit, so the app can't credit
+old ones. `scripts/backfill-royals.mjs` does it once with the Admin SDK (which bypasses the rules), trusting each user's own visit history (`vs` in
+`users/{uid}`). It fills the **all-time** board only (past visits have no dates, so the weekly board can't be backfilled).
+
+```bash
+npm i --no-save firebase-admin
+gcloud auth application-default login      # your own login; never put a service-account key in the repo
+node scripts/backfill-royals.mjs --project throneadvisor-0            # DRY RUN: prints what it would do, writes nothing
+node scripts/backfill-royals.mjs --project throneadvisor-0 --apply    # write it
+```
+
+- For everyone with visits it **sets** `royals/{uid}.n` to the total of their `vs`: it creates the record if there is none (name, avatar and title from the
+  profile, falling back to the generated nickname; birth date = the account's creation date), raises a lower `n`, and leaves a record that is already
+  high enough alone. Accounts that no longer exist are skipped. It sets rather than adds, so it is safe to run again (a second run changes nothing).
+- It also fills the record's set of toilets tried (`ts`, and its size `x`) from the toilets in `vs`. Without that, the next visit to a toilet the user
+  used before the backfill is **refused by the rules** (checked in the emulator): the record would claim the toilet is new while their history says it
+  isn't. Pass `--no-tried` only if you know you don't want it.
+- Deploy the new rules and app **first**, then backfill: visits made on the old app between the backfill and the deploy would otherwise be missed (they
+  are in `vs`, but not on the board), while a backfill after the deploy picks up everything in `vs`. It reads every
+  `users` document once (one read per user) and writes one record per user, so it is a small, one-time cost on the free plan. Run it when the app is quiet: a
+  visit counted between its read and its write would be missed (running it again catches up).
+- Not covered: users who visited before profiles kept a `vs` history have nothing to read, and `vs` is each user's own bookkeeping, not verified by
+  the rules, so this is a one-time goodwill import.
+
 ## Project layout
 
 ```
@@ -187,9 +265,10 @@ src/
   credits.js, quick-ui.js   the credits pop-up; the 💩 "I just throned" button and picker
   tiers.js, tiers-ui.js   the five rating tiers (ranges, names, colours, pictures) and the badge shown in rows
   sheet-swipe.js   swipe gestures for the bottom sheet
+  royals.js   loads the four Royals boards and keeps your own entries (cached on the phone)
   list.js (Near you / Top rated / Me), detail.js, dom.js, style.css
   data/        generated toilet registry (npm run toilets:fetch)
-scripts/       fetch-toilets.mjs (MazeMap -> JSON), seed-emulator.mjs, make-maskable.mjs, make-level-icons.mjs
+scripts/       fetch-toilets.mjs (MazeMap -> JSON), seed-emulator.mjs, backfill-royals.mjs (one-off), make-maskable.mjs, make-level-icons.mjs
 art/levels/    source artwork of the five tiers (large transparent PNGs, not shipped)
 src/assets/levels/  the shipped tier icons: trimmed, square, 256px WebP (~15 KB each), made by `make-level-icons.mjs`
 public/         manifest, icons, service worker (copied as-is into the build)

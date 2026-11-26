@@ -5,6 +5,7 @@
 import { readFileSync } from "node:fs";
 import { initializeTestEnvironment } from "@firebase/rules-unit-testing";
 import { doc, setDoc, Timestamp } from "firebase/firestore";
+import { weekNumber } from "../src/profile.js";
 
 const CAMPUS = "dtu-lyngby";
 const registry = JSON.parse(readFileSync("src/data/toilets-dtu-lyngby.json", "utf8"));
@@ -69,8 +70,33 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   for (const r of reviews) {
     const at = Timestamp.fromMillis(Date.now() - r.ageMin * 60_000);
     await setDoc(doc(db, "campuses", CAMPUS, "toilets", r.id, "reviews", r.uid), {
-      p: r.p, c: r.c, k: r.k, ...(r.text ? { text: r.text } : {}), createdAt: at, updatedAt: at,
+      p: r.p, c: r.c, k: r.k, ...(r.text ? { text: r.text } : {}), ...(r.text && rand() < 0.5 ? { lk: int(1, 7) } : {}),
+      createdAt: at, updatedAt: at,
     });
+  }
+
+  // A demo leaderboard of kings and queens (the app creates these records itself as people throne).
+  const ROYALS = [
+    ["Ceremonial Countess", "queen", "👑"], ["Silent Baron", "king", "🎩"], ["Regal Plunger", "king", null],
+    ["Porcelain Duke", "king", "🦉"], ["Gentle Monarch", "queen", "🦄"], ["Humble Squire", "king", null],
+    ["Noble Pilgrim", "queen", "🌵"], ["Swift Regent", null, "🚀"], ["Brave Sitter", "king", "🦊"],
+    ["Thoughtful Captain", "queen", null], ["Mighty Wizard", "king", "🐸"], ["Calm Scholar", "queen", "☕"],
+  ];
+  // Each has an all-time record and an entry on this week's board; `ts` is the set of toilets they have tried
+  // and `x` its size (what "Throne Hoppers" ranks by), `n` their sessions (what "The Royal Flush" ranks by).
+  const ids = registry.toilets.map((t) => t.id);
+  const toiletSet = (k) => Object.fromEntries([...ids].sort(() => rand() - 0.5).slice(0, k).map((id) => [id, true]));
+  for (const [i, [name, title, emoji]] of ROYALS.entries()) {
+    const base = {
+      name, ...(emoji ? { emoji } : {}), ...(title ? { title } : {}),
+      born: Timestamp.fromMillis(Date.now() - int(10, 300) * 86_400_000),
+    };
+    const n = 60 - i * 4 - int(0, 3);
+    const x = Math.min(n, int(3, 40));
+    await setDoc(doc(db, "campuses", CAMPUS, "royals", `demo-royal-${i}`), { ...base, n, x, ts: toiletSet(x) });
+    const weekN = int(1, 9);
+    const weekX = Math.min(weekN, int(1, 6));
+    await setDoc(doc(db, "campuses", CAMPUS, "weeks", String(weekNumber()), "royals", `demo-royal-${i}`), { ...base, n: weekN, x: weekX, ts: toiletSet(weekX) });
   }
 });
 await env.cleanup();

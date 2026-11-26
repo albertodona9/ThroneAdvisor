@@ -18,7 +18,9 @@ export const state = {
   live: {}, // { id: {u,s,d} }
   uid: null,
   account: null, // {uid, anonymous, name, email, photoURL} | null (never wrote anything yet)
-  profile: null, // {name, emoji, rv, vs} once loaded (one read), else null
+  profile: null, // {name, emoji, title, rv, vs, q, lk} once loaded (one read), else null
+  boards: null, // the four top-3 leaderboards once loaded: {week, weekSessions, weekExplorers, allSessions, allExplorers, at}
+  myRoyal: null, // my own entries {uid, all, week}: which toilets I've already tried (in memory, loaded when needed)
   position: null, // {lng, lat, accuracy}
   z: 1, // floor shown on the map
   selectedId: null,

@@ -1,13 +1,13 @@
 // Detail view of one toilet: score, availability, check-in/out, review form, reviews.
 import { fetchReviews, MAX_TEXT_LENGTH } from "./api.js";
-import { endVisit, errorMessage, loadMyReview, startVisit, submitReview } from "./actions.js";
+import { endVisit, errorMessage, hasLiked, loadMyReview, startVisit, submitReview, toggleLike } from "./actions.js";
 import { CAMPUS } from "./config.js";
 import { h, replaceChildren, toast } from "./dom.js";
 import { timeAgo } from "./geo.js";
 import { toiletPlace, toiletTitle } from "./labels.js";
 import { displayName } from "./profile.js";
 import { categoryScores, formatScore, overallScore, reviewScore, scoreColor } from "./scoring.js";
-import { TIERS, UNRATED_COLOR, tierFor } from "./tiers.js";
+import { UNRATED_COLOR, tierFor } from "./tiers.js";
 import { db } from "./firebase.js";
 import { shouldPromptSave, snoozeSavePrompt } from "./account-ui.js";
 import { occupancy, state } from "./store.js";
@@ -66,7 +66,7 @@ export function createDetail({ onClose, onSaveAccount }) {
           "div",
           { class: "score-meta" },
           h("strong", { class: "tier-name" }, tier ? tier.name : "Not rated yet"),
-          tier ? h("span", { class: "tier-level", style: `color:${tier.color}` }, `Level ${tier.level} of ${TIERS.length} · ${tier.tagline}`) : null,
+          tier ? h("span", { class: "tier-level", style: `color:${tier.color}` }, tier.tagline) : null,
           h(
             "span",
             null,
@@ -147,7 +147,7 @@ export function createDetail({ onClose, onSaveAccount }) {
     if (!toilet) return;
     renderSummary();
     renderActions();
-    const key = `${state.uid}|${state.profile?.name}|${state.profile?.emoji}`;
+    const key = `${state.uid}|${state.profile?.name}|${state.profile?.emoji}|${Object.keys(state.profile?.lk ?? {}).length}`;
     if (renderedKey !== key) {
       renderedKey = key;
       renderReviews();
@@ -284,7 +284,7 @@ export function createDetail({ onClose, onSaveAccount }) {
 
     // A review is also the easiest way to log a visit. Not offered when the check-out just counted one.
     const visit = h("input", { type: "checkbox", checked: !previous });
-    const visitRow = visitCounted
+    const visitRow = visitCounted || previous
       ? null
       : h("label", { class: "check" }, visit, h("span", null, "I used this toilet (adds to its usage count)"));
 
@@ -298,7 +298,7 @@ export function createDetail({ onClose, onSaveAccount }) {
           submit.disabled = true;
           const id = toilet.id;
           try {
-            await submitReview(id, { ...values, text: text.value, countVisit: !visitCounted && visit.checked });
+            await submitReview(id, { ...values, text: text.value, countVisit: !visitCounted && !previous && visit.checked });
             toast("Thanks! Your review is in 🧻");
             upsertCachedReview(id);
             closeForm();
@@ -407,7 +407,52 @@ export function createDetail({ onClose, onSaveAccount }) {
       ),
       h("p", { class: "review-scores" }, `🚪 ${r.p}  ✨ ${r.c}  🛋️ ${r.k}`),
       r.text ? h("p", { class: "review-text" }, r.text) : null,
+      likeControl(card, mineCard),
     );
+  }
+
+  // ---- likes ----------------------------------------------------------------------------------
+
+  const liking = new Set(); // reviews whose like is being saved (ignore double taps)
+
+  /** A heart with a small counter. You can't like your own review: it just shows its count. */
+  function likeControl(card, mineCard) {
+    const n = card.likes ?? 0;
+    if (mineCard) return n ? h("footer", { class: "review-foot" }, h("span", { class: "like static" }, "♥", h("span", { class: "like-n" }, String(n)))) : null;
+    const liked = hasLiked(toilet.id, card.uid);
+    return h(
+      "footer",
+      { class: "review-foot" },
+      h(
+        "button",
+        {
+          class: `like ${liked ? "on" : ""}`,
+          type: "button",
+          "aria-pressed": liked,
+          "aria-label": liked ? "Remove your like" : "Like this review",
+          onclick: () => onLike(card),
+        },
+        liked ? "♥" : "♡",
+        n ? h("span", { class: "like-n" }, String(n)) : null,
+      ),
+    );
+  }
+
+  async function onLike(card) {
+    if (liking.has(card.uid)) return;
+    liking.add(card.uid);
+    const id = toilet.id;
+    try {
+      const { delta } = await toggleLike(id, card);
+      const entry = reviewCache.get(id)?.list.find((x) => x.uid === card.uid);
+      if (entry) entry.likes = Math.max(0, (entry.likes ?? 0) + delta);
+    } catch (e) {
+      console.warn(e);
+      toast(errorMessage(e));
+    } finally {
+      liking.delete(card.uid);
+      if (toilet?.id === id) renderReviews();
+    }
   }
 
   // ---- public API ---------------------------------------------------------------------
