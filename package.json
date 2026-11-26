@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "description": "Find and rate the toilets on campus.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/albertodona9/ThroneAdvisor.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

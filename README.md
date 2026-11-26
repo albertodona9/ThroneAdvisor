@@ -109,3 +109,7 @@ tests/         security-rules tests
 firestore.rules  firebase.json  firestore.indexes.json
 _legacy/       the previous prototype, safe to delete
 ```
+
+## License
+
+[MIT](LICENSE). Toilet and map data come from [MazeMap](https://www.mazemap.com) and are subject to its terms.
