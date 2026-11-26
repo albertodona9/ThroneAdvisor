@@ -1,7 +1,8 @@
 import { initializeApp } from "firebase/app";
+import { initializeAppCheck, ReCaptchaEnterpriseProvider, ReCaptchaV3Provider } from "firebase/app-check";
 import { connectAuthEmulator, getAuth, signInAnonymously } from "firebase/auth";
 import { connectFirestoreEmulator, getFirestore } from "firebase/firestore";
-import { FIREBASE_CONFIG, USE_EMULATOR } from "./config.js";
+import { APPCHECK, FIREBASE_CONFIG, USE_EMULATOR } from "./config.js";
 
 const missing = Object.entries(FIREBASE_CONFIG).filter(([, v]) => !v).map(([k]) => k);
 if (missing.length) {
@@ -9,6 +10,27 @@ if (missing.length) {
 }
 
 const app = initializeApp(FIREBASE_CONFIG);
+
+// App Check proves requests come from this real site (via reCAPTCHA), not a script reusing the
+// public config. Once it is *enforced* in the Firebase console, requests without a token are
+// rejected, so this must run before Firestore/Auth are used. The emulators don't need it.
+if (!USE_EMULATOR) {
+  if (APPCHECK.siteKey) {
+    // `npm run dev` against a real project: the SDK prints a debug token to register under
+    // Firebase console -> App Check -> Apps -> Manage debug tokens.
+    if (import.meta.env.DEV) self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+    initializeAppCheck(app, {
+      provider:
+        APPCHECK.provider === "enterprise"
+          ? new ReCaptchaEnterpriseProvider(APPCHECK.siteKey)
+          : new ReCaptchaV3Provider(APPCHECK.siteKey),
+      isTokenAutoRefreshEnabled: true,
+    });
+  } else {
+    console.warn("App Check is not configured (VITE_APPCHECK_SITE_KEY): fine unless it is enforced in the console.");
+  }
+}
+
 export const db = getFirestore(app);
 export const auth = getAuth(app);
 

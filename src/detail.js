@@ -8,6 +8,7 @@ import { toiletPlace, toiletTitle } from "./labels.js";
 import { nickname } from "./nickname.js";
 import { categoryScores, formatScore, overallScore, reviewScore, scoreColor } from "./scoring.js";
 import { db } from "./firebase.js";
+import { shouldPromptSave, snoozeSavePrompt } from "./account-ui.js";
 import { occupancy, state } from "./store.js";
 
 const CATEGORIES = [
@@ -19,7 +20,7 @@ const CATEGORIES = [
 // Reviews already loaded this session, so reopening a toilet costs no reads.
 const reviewCache = new Map(); // id -> {list, cursor, done}
 
-export function createDetail({ onClose }) {
+export function createDetail({ onClose, onSaveAccount }) {
   const el = h("div", { class: "detail" });
   const head = h("div", { class: "detail-head" });
   const summary = h("div", { class: "summary" });
@@ -128,10 +129,49 @@ export function createDetail({ onClose }) {
     );
   }
 
+  let renderedUid; // the reviews list labels "(you)", so it must be redrawn when the user changes
+
   function render() {
     if (!toilet) return;
     renderSummary();
     renderActions();
+    if (renderedUid !== state.uid) {
+      renderedUid = state.uid;
+      renderReviews();
+    }
+    // The prompt disappears by itself once the account has been saved.
+    if (!state.account?.anonymous) formBox.querySelector(".save-prompt")?.remove();
+  }
+
+  /** Right after a review is the moment people care about not losing it. */
+  function showSavePrompt() {
+    if (!shouldPromptSave()) return;
+    replaceChildren(
+      formBox,
+      h(
+        "div",
+        { class: "save-prompt" },
+        h("strong", null, "💾 Keep your reviews safe"),
+        h("p", null, "They're tied to this browser right now. Save your account with Google and they follow you to any phone."),
+        h(
+          "div",
+          { class: "btn-row" },
+          h("button", { class: "btn primary", type: "button", onclick: () => onSaveAccount() }, "Save my account"),
+          h(
+            "button",
+            {
+              class: "btn ghost",
+              type: "button",
+              onclick: () => {
+                snoozeSavePrompt();
+                replaceChildren(formBox);
+              },
+            },
+            "Later",
+          ),
+        ),
+      ),
+    );
   }
 
   // ---- actions ------------------------------------------------------------------------
@@ -251,6 +291,7 @@ export function createDetail({ onClose }) {
             closeForm();
             renderReviews();
             render();
+            showSavePrompt();
           } catch (e) {
             console.warn(e);
             toast(errorMessage(e));

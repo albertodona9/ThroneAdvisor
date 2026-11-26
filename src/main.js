@@ -1,10 +1,11 @@
 import "./style.css";
+import { createAccountUI } from "./account-ui.js";
+import { initAccount } from "./account.js";
 import { CAMPUS } from "./config.js";
 import { createDetail } from "./detail.js";
 import { h, toast } from "./dom.js";
 import { inBounds } from "./geo.js";
 import { spreadOverlaps } from "./layout.js";
-import { currentUid } from "./firebase.js";
 import { createList } from "./list.js";
 import { createMap, floor, flyToUser, focusToilet, renderToilets, setSelected, showUser } from "./map.js";
 import { startSync, refreshAll } from "./sync.js";
@@ -12,7 +13,8 @@ import { state, subscribe, update } from "./store.js";
 
 // ---- layout -------------------------------------------------------------------------
 
-const detail = createDetail({ onClose: deselect });
+const account = createAccountUI();
+const detail = createDetail({ onClose: deselect, onSaveAccount: account.open });
 const list = createList({ onPick: select });
 
 const offlineChip = h("span", { class: "chip offline", hidden: true }, "offline");
@@ -31,6 +33,7 @@ const locate = h(
 
 document.getElementById("app").append(
   h("header", { class: "topbar" }, h("div", { class: "brand" }, h("span", null, "🚽"), " ThroneAdvisor"), offlineChip),
+  account.button,
   locate,
   sheet,
 );
@@ -108,6 +111,7 @@ subscribe((s) => {
 });
 
 async function boot() {
+  initAccount(); // restores a saved/anonymous session and keeps state.uid / state.account current
   createMap({
     onSelect: select,
     onDeselect: () => state.selectedId && deselect(),
@@ -120,7 +124,6 @@ async function boot() {
   update({
     toilets,
     byId: new Map(toilets.map((t) => [t.id, t])),
-    uid: await currentUid(),
     z: floor(),
     loaded: true,
   });

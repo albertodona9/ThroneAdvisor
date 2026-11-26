@@ -1,5 +1,14 @@
 # 🚽 ThroneAdvisor
 
+_TODO_
+
+[ ] Add possibility to install webapp
+[ ] Add info page with credits and kings/queens page with users stats
+[ ] Make app a bit "less polished" with poops ratings based on the overalls (stinky, medium, excellent etc.)
+[ ] trophies for reviewers, add monthly leaderboards and yearly throne kings and queens
+[ ] login options and cache storing on the phone so no need to login each time
+[ ]
+
 Find a free toilet on campus and rate how nice it is to sit in. Built for DTU Lyngby on top of
 [MazeMap](https://www.mazemap.com), hosted on Firebase.
 
@@ -34,12 +43,12 @@ npm run toilets:fetch  # re-download the toilet list from MazeMap
 
 Firestore bills per document read, so the whole design is about reading few documents.
 
-| What | Where | Cost |
-| --- | --- | --- |
-| Toilet locations, names, floors (876 toilets) | Static JSON bundled with the app (`src/data/`) | **0 reads** |
-| Every toilet's score sums + visit counter | One document: `campuses/{campus}/meta/stats` | 1 read per refresh |
-| Who is in which toilet right now | One document: `campuses/{campus}/meta/live` | 1 read per refresh |
-| Reviews | `campuses/{campus}/toilets/{id}/reviews/{uid}` | ≤ 10 reads, only when someone opens that toilet (cached for the session) |
+| What                                          | Where                                          | Cost                                                                     |
+| --------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------ |
+| Toilet locations, names, floors (876 toilets) | Static JSON bundled with the app (`src/data/`) | **0 reads**                                                              |
+| Every toilet's score sums + visit counter     | One document: `campuses/{campus}/meta/stats`   | 1 read per refresh                                                       |
+| Who is in which toilet right now              | One document: `campuses/{campus}/meta/live`    | 1 read per refresh                                                       |
+| Reviews                                       | `campuses/{campus}/toilets/{id}/reviews/{uid}` | ≤ 10 reads, only when someone opens that toilet (cached for the session) |
 
 Opening the app costs **2 reads**, regardless of how many toilets exist. While the tab is visible it
 re-reads `live` every 2 min and `stats` every 5 min (see `src/config.js`; `live` is polled slowly because few people check in
@@ -74,9 +83,13 @@ The "in use" state expires by itself (10 min) so a forgotten check-in never bloc
 - Your Firebase CLI login lives in your user profile, never in the project. There are no service-account keys here; never add any
   (nothing in this app needs them).
 - **Restrict the API key** (Google Cloud console -> APIs & Services -> Credentials -> the "Browser key" Firebase created):
-  *Application restrictions* -> Websites -> `https://throneadvisor-0.web.app/*` and `https://throneadvisor-0.firebaseapp.com/*`.
-- **Turn on App Check** (Firebase console -> App Check -> register the web app with reCAPTCHA, then enforce it for Firestore and
-  Authentication) so only your real site can talk to the project, not scripts that copied the config.
+  _Application restrictions_ -> Websites -> `https://throneadvisor-0.web.app/*` and `https://throneadvisor-0.firebaseapp.com/*`.
+- **App Check** (Firebase console -> App Check -> register the web app with reCAPTCHA, then enforce it for Firestore and
+  Authentication) means only your real site can talk to the project, not scripts that copied the config. The app side is in
+  `src/firebase.js`: put the public reCAPTCHA _site_ key in `VITE_APPCHECK_SITE_KEY` (and `VITE_APPCHECK_PROVIDER=enterprise` if you
+  registered reCAPTCHA Enterprise) in `.env.production.local`. **Don't enforce App Check before a build with the key is deployed:**
+  enforced requests without a token are rejected and the site shows nothing. For `npm run dev` against a real project, register the
+  debug token the SDK prints in the console (Apps -> Manage debug tokens). The emulators skip App Check.
 
 ## Deploying
 

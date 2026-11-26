@@ -14,6 +14,13 @@ export const FIREBASE_CONFIG = {
 
 export const USE_EMULATOR = env.VITE_USE_EMULATOR === "true";
 
+// App Check (reCAPTCHA). The site key is public. "enterprise" or "v3" must match what was
+// registered under Firebase console -> App Check.
+export const APPCHECK = {
+  siteKey: env.VITE_APPCHECK_SITE_KEY,
+  provider: env.VITE_APPCHECK_PROVIDER === "enterprise" ? "enterprise" : "v3",
+};
+
 export const CAMPUS = {
   id: "dtu-lyngby",
   mazemapId: 89,

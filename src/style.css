@@ -300,3 +300,98 @@ h2, h3, p { margin: 0; }
   .mapboxgl-ctrl-bottom-left { left: 424px; }
   #toast.show { transform: translate(-50%, -8px); }
 }
+
+/* ---- account ------------------------------------------------------------------------------ */
+
+.account-btn {
+  position: fixed;
+  top: calc(10px + var(--safe-top));
+  right: 12px;
+  z-index: 5;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: 20px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  overflow: visible;
+}
+.account-btn.needs-save::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #f59e0b;
+  border: 2px solid #fff;
+}
+.avatar { border-radius: 50%; object-fit: cover; display: grid; place-items: center; }
+.avatar.small { width: 42px; height: 42px; }
+.avatar.big { width: 56px; height: 56px; font-size: 22px; flex: none; }
+.avatar.initial { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(35, 26, 20, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: var(--safe-bottom);
+}
+.modal-card {
+  width: 100%;
+  max-width: 440px;
+  background: var(--surface);
+  border-radius: var(--radius) var(--radius) 0 0;
+  padding: 18px 18px 22px;
+  display: grid;
+  gap: 14px;
+  box-shadow: var(--shadow);
+}
+.modal-head { display: flex; justify-content: space-between; align-items: center; }
+.modal-head h2 { font-size: 19px; }
+.note { color: var(--ink); }
+.fineprint { color: var(--muted); font-size: 12.5px; text-align: center; }
+.profile { display: flex; gap: 12px; align-items: center; }
+.profile p { margin: 0; }
+.btn.google {
+  background: #fff;
+  border: 1px solid #dadce0;
+  color: #3c4043;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.gicon { display: grid; }
+.linklike {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-weight: 600;
+  padding: 6px;
+  text-decoration: underline;
+}
+.save-prompt {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  display: grid;
+  gap: 6px;
+}
+.save-prompt p { color: var(--ink); }
+
+@media (min-width: 820px) {
+  .modal { align-items: center; }
+  .modal-card { border-radius: var(--radius); }
+}

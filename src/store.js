@@ -17,6 +17,7 @@ export const state = {
   stats: {}, // { id: {n,p,c,k,v} }
   live: {}, // { id: {u,s,d} }
   uid: null,
+  account: null, // {uid, anonymous, name, email, photoURL} | null (never wrote anything yet)
   position: null, // {lng, lat, accuracy}
   z: 1, // floor shown on the map
   selectedId: null,
