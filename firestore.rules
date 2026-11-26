@@ -41,6 +41,9 @@ service cloud.firestore {
       function reviewPath(id, uid) {
         return /databases/$(database)/documents/campuses/$(campus)/toilets/$(id)/reviews/$(uid);
       }
+      function userPath(uid) {
+        return /databases/$(database)/documents/users/$(uid);
+      }
 
       function isToiletId(id) {
         return id is string && id.matches('^[0-9]{1,12}$');
@@ -72,7 +75,24 @@ service cloud.firestore {
           && d.t[id].keys().hasOnly(['n', 'p', 'c', 'k', 'v'])
           && d.t[id].n is int && d.t[id].p is int && d.t[id].c is int
           && d.t[id].k is int && d.t[id].v is int
-          && (reviewBacksStats(id, b, d.t[id]) || visitBacksStats(id, b, d.t[id]));
+          && (reviewBacksStats(id, b, d.t[id]) || visitBacksStats(id, b, d.t[id]) || quickBacksStats(id, b, d.t[id]));
+      }
+
+      // "I just throned": a quick visit with no review and no check-in. It is limited to 3 a day
+      // per user, which is tracked in the user's own profile (`q: {d: day, n: count}`) and must be
+      // bumped in this same batch, so every counted visit uses up one of the day's three.
+      function quickBacksStats(id, b, a) {
+        let uid = request.auth.uid;
+        let before = exists(userPath(uid)) ? get(userPath(uid)).data : {};
+        let after = getAfter(userPath(uid)).data;
+        let today = dayNumber(request.time);
+        let used = ('q' in before && before.q.d == today) ? before.q.n : 0;
+        return a.v == b.v + 1
+          && a.n == b.n && a.p == b.p && a.c == b.c && a.k == b.k
+          && 'q' in after
+          && after.q.d == today
+          && after.q.n == used + 1
+          && after.q.n <= 3;
       }
 
       // The user's review doc in this same batch accounts for the exact change.
@@ -191,12 +211,35 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow get: if signedIn() && request.auth.uid == uid;
-      allow create, update: if signedIn() && request.auth.uid == uid && validProfile(request.resource.data);
-      allow delete: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid
+        && validProfile(request.resource.data) && quotaOk(request.resource.data, null);
+      allow update: if signedIn() && request.auth.uid == uid
+        && validProfile(request.resource.data) && quotaOk(request.resource.data, resource.data.get('q', null));
+      // Deleting your profile is fine, except that it must not be a way to reset today's allowance.
+      allow delete: if signedIn() && request.auth.uid == uid
+        && (!('q' in resource.data) || resource.data.q.d != dayNumber(request.time));
+    }
+
+    // "Day" for the quick-visit allowance: UTC shifted by one hour, so it rolls over at about
+    // midnight in Denmark (00:00 in winter, 01:00 in summer). Keep in sync with src/profile.js.
+    function dayNumber(t) {
+      let s = t + duration.value(1, 'h');
+      return s.year() * 10000 + s.month() * 100 + s.day();
+    }
+
+    // q = today's quick-visit allowance {d: day, n: used}. It may only stay as it is or move
+    // forward on the current day, so it can't be reset by rewriting the document.
+    function quotaOk(p, old) {
+      let today = dayNumber(request.time);
+      return !('q' in p)
+        ? old == null
+        : (p.q.keys().hasOnly(['d', 'n']) && p.q.d is int && p.q.n is int && p.q.n >= 0 && p.q.n <= 3
+            && ((old != null && p.q == old)
+                || (p.q.d == today && (old == null || old.d != today || p.q.n >= old.n))));
     }
 
     function validProfile(p) {
-      return p.keys().hasOnly(['name', 'emoji', 'rv', 'vs'])
+      return p.keys().hasOnly(['name', 'emoji', 'rv', 'vs', 'q'])
         && (!('name' in p) || validName(p.name))
         && (!('emoji' in p) || allowedEmoji(p.emoji))
         && (!('rv' in p) || (p.rv is map && p.rv.size() <= 2000))

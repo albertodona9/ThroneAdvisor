@@ -41,3 +41,24 @@ export function myReviewList(profile) {
     .map(([id, r]) => ({ id, ...r, score: (r.p + r.c + r.k) / 3 }))
     .sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
 }
+
+// ---- "I just throned": the quick-visit allowance ---------------------------------------------
+
+export const QUICK_PER_DAY = 3;
+
+// A "day" is UTC shifted by one hour, so it rolls over at about midnight in Denmark. Must match
+// dayNumber() in firestore.rules, which is what really enforces the limit.
+const DAY_SHIFT_MS = 3600_000;
+
+/** yyyymmdd of the allowance day containing `ms`. */
+export function dayNumber(ms = Date.now()) {
+  const d = new Date(ms + DAY_SHIFT_MS);
+  return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + (d.getUTCDate());
+}
+
+/** How many quick visits the profile has used today, and how many are left. */
+export function quickUsage(profile, ms = Date.now()) {
+  const q = profile?.q;
+  const used = q && q.d === dayNumber(ms) ? q.n : 0;
+  return { used, left: Math.max(0, QUICK_PER_DAY - used) };
+}

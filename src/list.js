@@ -7,7 +7,8 @@ import { h, replaceChildren } from "./dom.js";
 import { distanceMeters, formatDistance, inBounds, timeAgo } from "./geo.js";
 import { toiletPlace, toiletTitle } from "./labels.js";
 import { displayName, myReviewList, profileStats } from "./profile.js";
-import { formatScore, overallScore, rankScore, scoreColor } from "./scoring.js";
+import { overallScore, rankScore } from "./scoring.js";
+import { tierBadge, tierTag } from "./tiers-ui.js";
 import { occupancy, state } from "./store.js";
 
 const FLOOR_PENALTY_M = 12; // one floor away counts as 12 m extra when ranking "nearby"
@@ -46,11 +47,11 @@ function row({ t, meters }, onPick) {
   return h(
     "button",
     { class: "row", type: "button", onclick: () => onPick(t) },
-    h("span", { class: "bubble", style: `background:${scoreColor(score)}` }, formatScore(score)),
+    tierBadge(score),
     h(
       "span",
       { class: "row-main" },
-      h("span", { class: "row-title" }, toiletTitle(t)),
+      h("span", { class: "row-title" }, toiletTitle(t), tierTag(score)),
       h(
         "span",
         { class: "row-sub" },
@@ -102,11 +103,11 @@ function meView(onPick, onEditProfile) {
             return h(
               "button",
               { class: "row", type: "button", onclick: () => onPick(t) },
-              h("span", { class: "bubble", style: `background:${scoreColor(r.score)}` }, formatScore(r.score)),
+              tierBadge(r.score),
               h(
                 "span",
                 { class: "row-main" },
-                h("span", { class: "row-title" }, toiletTitle(t)),
+                h("span", { class: "row-title" }, toiletTitle(t), tierTag(r.score)),
                 h(
                   "span",
                   { class: "row-sub" },

@@ -7,6 +7,7 @@ import { timeAgo } from "./geo.js";
 import { toiletPlace, toiletTitle } from "./labels.js";
 import { displayName } from "./profile.js";
 import { categoryScores, formatScore, overallScore, reviewScore, scoreColor } from "./scoring.js";
+import { TIERS, UNRATED_COLOR, tierFor } from "./tiers.js";
 import { db } from "./firebase.js";
 import { shouldPromptSave, snoozeSavePrompt } from "./account-ui.js";
 import { occupancy, state } from "./store.js";
@@ -52,16 +53,27 @@ export function createDetail({ onClose, onSaveAccount }) {
     const e = state.stats[toilet.id];
     const score = overallScore(e);
     const cats = categoryScores(e);
+    const tier = tierFor(score);
     replaceChildren(
       summary,
       h(
         "div",
         { class: "score-card" },
-        h("div", { class: "big-score", style: `background:${scoreColor(score)}` }, formatScore(score)),
+        tier
+          ? h("img", { class: "tier-hero", src: tier.image, alt: tier.name, width: 104, height: 104 })
+          : h("div", { class: "big-score", style: `background:${UNRATED_COLOR}` }, "–"),
         h(
           "div",
           { class: "score-meta" },
-          h("strong", null, e?.n ? `${e.n} review${e.n === 1 ? "" : "s"}` : "No reviews yet"),
+          h("strong", { class: "tier-name" }, tier ? tier.name : "Not rated yet"),
+          tier ? h("span", { class: "tier-level", style: `color:${tier.color}` }, `Level ${tier.level} of ${TIERS.length} · ${tier.tagline}`) : null,
+          h(
+            "span",
+            null,
+            tier
+              ? [h("b", { class: "score-pill", style: `background:${tier.color}` }, formatScore(score)), ` from ${e.n} review${e.n === 1 ? "" : "s"}`]
+              : "No reviews yet",
+          ),
           h("span", null, `Used ${e?.v ?? 0} time${e?.v === 1 ? "" : "s"}`),
         ),
       ),

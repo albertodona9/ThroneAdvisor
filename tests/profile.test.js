@@ -1,5 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { EMOJIS, displayName, myReviewList, nameProblem, profileStats } from "../src/profile.js";
+import { EMOJIS, QUICK_PER_DAY, dayNumber, displayName, myReviewList, nameProblem, profileStats, quickUsage } from "../src/profile.js";
+
+describe("quick-visit allowance", () => {
+  it("rolls the day over one hour after UTC midnight (about midnight in Denmark)", () => {
+    expect(dayNumber(Date.parse("2026-11-26T22:59:59Z"))).toBe(20261126);
+    expect(dayNumber(Date.parse("2026-11-26T23:00:00Z"))).toBe(20261127);
+    expect(dayNumber(Date.parse("2026-12-31T23:30:00Z"))).toBe(20270101); // across a year boundary
+    expect(dayNumber(Date.parse("2026-02-28T23:00:00Z"))).toBe(20260301); // across a month boundary
+  });
+
+  it("counts today's quick visits and what is left", () => {
+    const now = Date.parse("2026-11-26T12:00:00Z");
+    expect(quickUsage(null, now)).toEqual({ used: 0, left: QUICK_PER_DAY });
+    expect(quickUsage({ q: { d: 20261126, n: 2 } }, now)).toEqual({ used: 2, left: 1 });
+    expect(quickUsage({ q: { d: 20261126, n: 3 } }, now)).toEqual({ used: 3, left: 0 });
+  });
+
+  it("forgets yesterday's quick visits", () => {
+    const now = Date.parse("2026-11-26T12:00:00Z");
+    expect(quickUsage({ q: { d: 20261125, n: 3 } }, now)).toEqual({ used: 0, left: QUICK_PER_DAY });
+  });
+
+  it("never reports a negative number left", () => {
+    expect(quickUsage({ q: { d: dayNumber(), n: 9 } }).left).toBe(0);
+  });
+});
 
 describe("nameProblem", () => {
   it("accepts empty (default nickname) and good names", () => {

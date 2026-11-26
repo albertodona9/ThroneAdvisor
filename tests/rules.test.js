@@ -18,7 +18,8 @@ import {
   updateDoc,
   writeBatch,
 } from "firebase/firestore";
-import { checkIn, checkOut, fetchLive, fetchMyReview, fetchProfile, fetchReviews, fetchStats, saveProfile, saveReview } from "../src/api.js";
+import { checkIn, checkOut, fetchLive, fetchMyReview, fetchProfile, fetchReviews, fetchStats, quickThrone, saveProfile, saveReview } from "../src/api.js";
+import { dayNumber } from "../src/profile.js";
 
 const CAMPUS = "test";
 const T = "255568"; // a toilet id
@@ -381,5 +382,87 @@ describe("profiles", () => {
     await assertSucceeds(setDoc(userDoc(as("alice"), "alice"), { name: "Alice A" }));
     await assertFails(deleteDoc(userDoc(as("bob"), "alice")));
     await assertSucceeds(deleteDoc(userDoc(as("alice"), "alice")));
+  });
+});
+
+describe("quick visits (I just throned)", () => {
+  const day = dayNumber();
+  const userDoc = (db, uid) => doc(db, "users", uid);
+  const quick = (db, uid, id, used, d = day) => quickThrone(db, CAMPUS, uid, id, { used, day: d });
+
+  it("allows 3 a day, counts each on the toilet and in the profile, then stops", async () => {
+    const db = as("alice");
+    await assertSucceeds(quick(db, "alice", T, 0));
+    await assertSucceeds(quick(db, "alice", U, 1));
+    await assertSucceeds(quick(db, "alice", T, 2));
+    const stats = await fetchStats(db, CAMPUS);
+    expect(stats[T].v).toBe(2);
+    expect(stats[U].v).toBe(1);
+    const profile = await fetchProfile(db, "alice");
+    expect(profile.q).toEqual({ d: day, n: 3 });
+    expect(profile.vs).toEqual({ [T]: 2, [U]: 1 });
+    await assertFails(quick(db, "alice", T, 3)); // a fourth one
+    await assertFails(quick(db, "alice", T, 0)); // ...or pretending the count is lower
+    expect((await fetchStats(db, CAMPUS))[T].v).toBe(2);
+  });
+
+  it("counts each user's allowance separately", async () => {
+    for (let i = 0; i < 3; i++) await assertSucceeds(quick(as("alice"), "alice", T, i));
+    await assertSucceeds(quick(as("bob"), "bob", T, 0));
+    expect((await fetchStats(as("bob"), CAMPUS))[T].v).toBe(4);
+  });
+
+  it("rejects bumping the counter without using up an allowance", async () => {
+    const db = as("alice");
+    await assertFails(updateDoc(metaDoc(db, "stats"), { [`t.${T}.v`]: increment(1), ref: T, at: serverTimestamp() }));
+    // ...even if the profile is written, as long as the allowance doesn't move by exactly one
+    const batch = writeBatch(db);
+    batch.update(metaDoc(db, "stats"), {
+      [`t.${T}.n`]: increment(0), [`t.${T}.p`]: increment(0), [`t.${T}.c`]: increment(0),
+      [`t.${T}.k`]: increment(0), [`t.${T}.v`]: increment(1), ref: T, at: serverTimestamp(),
+    });
+    batch.set(userDoc(db, "alice"), { q: { d: day, n: 2 } }, { merge: true }); // skips ahead by two
+    await assertFails(batch.commit());
+  });
+
+  it("rejects a quick visit that claims the wrong day", async () => {
+    await assertFails(quick(as("alice"), "alice", T, 0, day - 1));
+    await assertFails(quick(as("alice"), "alice", T, 0, day + 1));
+  });
+
+  it("a previous day's allowance doesn't count against today", async () => {
+    const yesterday = dayNumber(Date.now() - 24 * 3600_000);
+    await seed((db) => setDoc(userDoc(db, "alice"), { q: { d: yesterday, n: 3 } }));
+    await assertSucceeds(quick(as("alice"), "alice", T, 0));
+    expect((await fetchProfile(as("alice"), "alice")).q).toEqual({ d: day, n: 1 });
+  });
+
+  it("can't reset today's allowance by rewriting or deleting the profile", async () => {
+    const db = as("alice");
+    await quick(db, "alice", T, 0);
+    await quick(db, "alice", T, 1);
+    await assertFails(setDoc(userDoc(db, "alice"), { q: { d: day, n: 0 } }));
+    await assertFails(setDoc(userDoc(db, "alice"), { q: { d: day, n: 1 } }));
+    await assertFails(setDoc(userDoc(db, "alice"), { name: "Alice A" })); // a full overwrite drops q
+    await assertFails(deleteDoc(userDoc(db, "alice")));
+    // normal profile changes keep working and keep the allowance
+    await assertSucceeds(setDoc(userDoc(db, "alice"), { name: "Alice A" }, { merge: true }));
+    expect((await fetchProfile(db, "alice")).q).toEqual({ d: day, n: 2 });
+  });
+
+  it("can delete the profile when no allowance was used today", async () => {
+    const yesterday = dayNumber(Date.now() - 24 * 3600_000);
+    await seed((db) => setDoc(userDoc(db, "alice"), { q: { d: yesterday, n: 3 }, name: "Alice A" }));
+    await assertSucceeds(deleteDoc(userDoc(as("alice"), "alice")));
+  });
+
+  it("validates the allowance record itself", async () => {
+    const db = as("alice");
+    await assertFails(setDoc(userDoc(db, "alice"), { q: { d: day, n: 4 } }));
+    await assertFails(setDoc(userDoc(db, "alice"), { q: { d: day, n: -1 } }));
+    await assertFails(setDoc(userDoc(db, "alice"), { q: { d: day, n: 1, extra: true } }));
+    await assertFails(setDoc(userDoc(db, "alice"), { q: { d: "today", n: 1 } }));
+    await assertFails(setDoc(userDoc(db, "alice"), { q: { d: day - 1, n: 0 } })); // can't be backdated on creation
+    await assertSucceeds(setDoc(userDoc(db, "alice"), { q: { d: day, n: 1 } }));
   });
 });

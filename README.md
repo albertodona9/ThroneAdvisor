@@ -25,6 +25,15 @@ Find a free toilet on campus and rate how nice it is to sit in. Built for DTU Ly
   phone. Reviews show the username (a generated nickname unless they chose one), never the Google name or email.
 - **Profiles.** The top-right button opens the account window, where "Personalize profile" sets a username and an avatar. The **Me** tab in
   the bottom sheet shows your numbers (reviews, visits, toilets, average score) and every review you wrote.
+- **"I just throned" 💩.** The round button at the bottom right logs a quick visit: pick the toilet you used (closest first, or search),
+  confirm, and it adds one to that toilet's usage counter and to your profile. At most **3 a day** per user; the badge shows how many are left.
+- **Credits.** Tapping the ThroneAdvisor logo opens a pop-up with who made it and a link to this repository.
+- **Rating tiers.** A toilet's overall score decides its tier, which has a name and a picture shown in every list and in the detail view:
+  up to 2.0 **Peasant's Pot** · 2.1-4.0 **Commoner's Loo** · 4.1-6.0 **Noble's Rest** · 6.1-8.0 **Highness's Throne** · 8.1-10 **The King's Loo**.
+  The tier follows the score as displayed (one decimal), and the map bubbles use the tier's colour. Toilets nobody has rated yet have no tier
+  and show a grey "–". The ranges, names, colours and pictures all live in `src/tiers.js`.
+- **Swipe the bottom sheet.** Drag the list up to expand it and down to collapse it (it follows your finger and snaps; a quick flick decides the
+  direction). It never fights with scrolling the list. Tapping the handle still works.
 
 ## Run it locally
 
@@ -70,6 +79,14 @@ documents (`by`, `em`), so other people's names on a toilet's reviews cost no ex
 letters/digits/spaces/`_.-`, 16 allowed avatars). Renaming rewrites the user's own reviews in one batch; the rules allow that
 without touching scores or stats. Reviews written before profiles existed aren't in `rv`, so they don't appear in "Me" until the
 review is edited.
+
+**Quick logs and the daily limit.** A quick log is one batch of two writes (the toilet's counter in `stats`, plus your profile), so it costs
+nothing beyond a normal review. The limit of 3 a day is kept in your own profile as `q: {d: day, n: used}` and **enforced by the security
+rules**, not just by the phone: a counter increment is only accepted if the same batch also raises `q.n` by exactly one for today, `q.n`
+can't go above 3, and `q` can't be lowered or reset (including by deleting the profile). This adds only a couple of tiny rule lookups per log,
+at most 3 a day per user. The phone also shows how many are left (and falls back to the server's answer if another phone used some).
+A "day" rolls over at about midnight in Denmark (UTC shifted by one hour, in `dayNumber()` in `firestore.rules` and `src/profile.js`).
+Limits: anonymous accounts are free, so someone creating many accounts gets 3 a day each; App Check is what keeps scripts out.
 
 **A copy on the phone saves reads.** The last `stats`, `live` and profile documents are kept in `localStorage` (`src/cache.js`).
 Opening the app while the copy is younger than its limit reuses it and reads **nothing**: scores 5 min, live status 90 s, profile
@@ -167,9 +184,14 @@ src/
   layout.js    nudges overlapping toilet bubbles apart (display only)
   account.js, account-ui.js, profile.js   Google linking, account window + personalization, profile maths
   cache.js, install.js   phone copy of documents (saves reads); "Install app" chip
+  credits.js, quick-ui.js   the credits pop-up; the 💩 "I just throned" button and picker
+  tiers.js, tiers-ui.js   the five rating tiers (ranges, names, colours, pictures) and the badge shown in rows
+  sheet-swipe.js   swipe gestures for the bottom sheet
   list.js (Near you / Top rated / Me), detail.js, dom.js, style.css
   data/        generated toilet registry (npm run toilets:fetch)
-scripts/       fetch-toilets.mjs (MazeMap -> JSON), seed-emulator.mjs, make-maskable.mjs
+scripts/       fetch-toilets.mjs (MazeMap -> JSON), seed-emulator.mjs, make-maskable.mjs, make-level-icons.mjs
+art/levels/    source artwork of the five tiers (large transparent PNGs, not shipped)
+src/assets/levels/  the shipped tier icons: trimmed, square, 256px WebP (~15 KB each), made by `make-level-icons.mjs`
 public/         manifest, icons, service worker (copied as-is into the build)
 tests/         security-rules tests, layout and profile unit tests
 firestore.rules  firebase.json  firestore.indexes.json

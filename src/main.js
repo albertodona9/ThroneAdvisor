@@ -2,12 +2,15 @@ import "./style.css";
 import { createAccountUI } from "./account-ui.js";
 import { initAccount } from "./account.js";
 import { CAMPUS } from "./config.js";
+import { createCredits } from "./credits.js";
 import { createDetail } from "./detail.js";
 import { createInstallChip } from "./install.js";
 import { h, toast } from "./dom.js";
 import { inBounds } from "./geo.js";
 import { spreadOverlaps } from "./layout.js";
 import { createList } from "./list.js";
+import { enableSheetSwipe } from "./sheet-swipe.js";
+import { createQuickUI } from "./quick-ui.js";
 import { createMap, floor, flyToUser, focusToilet, renderToilets, setSelected, showUser } from "./map.js";
 import { startSync, refreshAll } from "./sync.js";
 import { state, subscribe, update } from "./store.js";
@@ -15,6 +18,7 @@ import { state, subscribe, update } from "./store.js";
 // ---- layout -------------------------------------------------------------------------
 
 const account = createAccountUI();
+const credits = createCredits();
 const detail = createDetail({ onClose: deselect, onSaveAccount: account.open });
 const list = createList({
   onPick: select,
@@ -22,6 +26,7 @@ const list = createList({
   onExpand: () => sheet.classList.add("expanded"),
 });
 
+const quick = createQuickUI({ onRate: (t) => select(t) });
 const offlineChip = h("span", { class: "chip offline", hidden: true }, "offline");
 const installChip = createInstallChip();
 const handle = h("button", {
@@ -31,6 +36,7 @@ const handle = h("button", {
   onclick: () => sheet.classList.toggle("expanded"),
 });
 const sheet = h("aside", { class: "sheet", "data-mode": "list" }, handle, list.el, detail.el);
+enableSheetSwipe({ sheet, list: list.el });
 const locate = h(
   "button",
   { class: "fab", type: "button", "aria-label": "Show my location", onclick: onLocate },
@@ -38,11 +44,28 @@ const locate = h(
 );
 
 document.getElementById("app").append(
-  h("header", { class: "topbar" }, h("div", { class: "brand" }, h("span", null, "🚽"), " ThroneAdvisor"), offlineChip, installChip),
+  h(
+    "header",
+    { class: "topbar" },
+    h(
+      "button",
+      { class: "brand", type: "button", "aria-label": "About ThroneAdvisor", onclick: credits.open },
+      h("img", { class: "brand-logo", src: "/android-chrome-192x192.png", alt: "", width: 28, height: 28 }),
+      "ThroneAdvisor",
+    ),
+    offlineChip,
+    installChip,
+  ),
   account.button,
   locate,
+  quick.button,
   sheet,
 );
+
+// The 💩 button sits just above the bottom sheet, whatever height the sheet has right now.
+const placeAboveSheet = () => document.documentElement.style.setProperty("--sheet-h", `${sheet.offsetHeight}px`);
+new ResizeObserver(placeAboveSheet).observe(sheet);
+placeAboveSheet();
 
 // ---- selection ----------------------------------------------------------------------
 

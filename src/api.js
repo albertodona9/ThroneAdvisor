@@ -92,7 +92,7 @@ export async function fetchMyReview(db, campus, toiletId, uid) {
 export async function fetchProfile(db, uid) {
   const snap = await getDoc(userRef(db, uid));
   const d = snap.exists() ? snap.data() : {};
-  return { name: d.name ?? null, emoji: d.emoji ?? null, rv: d.rv ?? {}, vs: d.vs ?? {} };
+  return { name: d.name ?? null, emoji: d.emoji ?? null, rv: d.rv ?? {}, vs: d.vs ?? {}, q: d.q ?? null };
 }
 
 // ---- writes --------------------------------------------------------------
@@ -210,6 +210,24 @@ export function checkOut(db, campus, toiletId, { countVisit, uid = null }) {
       batch.update(statsRef(db, campus), statsDelta(toiletId, { v: 1 }));
       if (uid) batch.set(userRef(db, uid), { vs: { [toiletId]: increment(1) } }, { merge: true });
     }
+    return batch;
+  });
+}
+
+/**
+ * "I just throned": one visit at a toilet, with no review and no check-in. The rules allow at most
+ * 3 a day per user, tracked in `q` of the user's own profile, which is bumped in this same batch.
+ * `used` is how many the client thinks were used on `day` (src/profile.js dayNumber).
+ */
+export function quickThrone(db, campus, uid, toiletId, { used, day }) {
+  return commitWithBootstrap(db, campus, () => {
+    const batch = writeBatch(db);
+    batch.update(statsRef(db, campus), statsDelta(toiletId, { v: 1 }));
+    batch.set(
+      userRef(db, uid),
+      { q: { d: day, n: used + 1 }, vs: { [toiletId]: increment(1) } },
+      { merge: true },
+    );
     return batch;
   });
 }

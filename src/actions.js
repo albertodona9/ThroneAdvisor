@@ -1,9 +1,10 @@
 // User actions: each one talks to Firestore (api.js) and then patches the local state
 // optimistically, so the UI updates without re-reading the aggregate documents.
-import { checkIn, checkOut, fetchMyReview, fetchProfile, saveProfile, saveReview } from "./api.js";
+import { checkIn, checkOut, fetchMyReview, fetchProfile, quickThrone, saveProfile, saveReview } from "./api.js";
 import { readCache, writeCache } from "./cache.js";
 import { CAMPUS, PROFILE_MAX_AGE_MS } from "./config.js";
 import { currentUid, db, ensureUser } from "./firebase.js";
+import { dayNumber, quickUsage } from "./profile.js";
 import { setCheckIn, state, update } from "./store.js";
 import { invalidateLive, invalidateStats } from "./sync.js";
 
@@ -26,7 +27,7 @@ export async function loadMyReview(id) {
   return review;
 }
 
-const EMPTY_PROFILE = () => ({ name: null, emoji: null, rv: {}, vs: {} });
+const EMPTY_PROFILE = () => ({ name: null, emoji: null, rv: {}, vs: {}, q: null });
 
 const profileKey = (uid) => `profile.${uid}`;
 
@@ -134,4 +135,32 @@ export async function submitReview(id, scores) {
   setProfile({ ...profile, rv: { ...profile.rv, [id]: { p: scores.p, c: scores.c, k: scores.k, at: Date.now() } }, vs });
   invalidateStats(); // so the next app open reads the new totals instead of a copy from before our review
   state.myReviews.set(id, { uid, p: scores.p, c: scores.c, k: scores.k, text: (scores.text ?? "").trim(), createdMs: previous?.createdMs ?? Date.now() });
+}
+
+/** Thrown when today's quick visits are used up (checked on the phone first, then by the rules). */
+export class QuickLimitError extends Error {}
+
+/** "I just throned": add one visit at toilet `id` to its counter and to the user's profile. */
+export async function quickVisit(id) {
+  const uid = await ensureUser();
+  update({ uid });
+  const profile = await loadProfile();
+  const { used, left } = quickUsage(profile);
+  if (left <= 0) throw new QuickLimitError();
+  const day = dayNumber();
+  try {
+    await quickThrone(db, CAMPUS.id, uid, id, { used, day });
+  } catch (e) {
+    if (e?.code === "permission-denied") {
+      // Most likely today's allowance was already used up on another phone: re-read it, so the
+      // counter on this phone catches up.
+      await loadProfile({ fresh: true }).catch(() => {});
+      throw new QuickLimitError();
+    }
+    throw e;
+  }
+  const e = state.stats[id] ?? { n: 0, p: 0, c: 0, k: 0, v: 0 };
+  update({ stats: { ...state.stats, [id]: { ...e, v: e.v + 1 } } });
+  setProfile({ ...profile, q: { d: day, n: used + 1 }, vs: { ...profile.vs, [id]: (profile.vs[id] ?? 0) + 1 } });
+  invalidateStats();
 }
