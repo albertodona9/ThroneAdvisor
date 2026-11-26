@@ -1,7 +1,8 @@
-// Account button (top right) and the account modal.
+// Account button (top right), the account modal, and its profile personalization view.
+import { errorMessage, loadProfile, updateProfile } from "./actions.js";
 import { authErrorMessage, logOut, saveWithGoogle, signInToExisting } from "./account.js";
 import { h, replaceChildren, toast } from "./dom.js";
-import { nickname } from "./nickname.js";
+import { EMOJIS, displayName, nameProblem } from "./profile.js";
 import { state, subscribe } from "./store.js";
 
 const GOOGLE_G = `<svg viewBox="0 0 48 48" width="20" height="20" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.6 5.9c4.5-4.1 7-10.2 7-17.6z"/><path fill="#FBBC05" d="M10.5 28.7c-.5-1.4-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.4 0 20.1 0 24s.9 7.6 2.6 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.6-5.9c-2.1 1.4-4.9 2.3-8.3 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>`;
@@ -17,20 +18,27 @@ function googleButton(label, onclick, disabled) {
 
 export function createAccountUI() {
   let busy = false;
-  const avatar = h("button", { class: "account-btn", type: "button", "aria-label": "Account", onclick: open });
+  let view = "main"; // "main" | "personalize"
+  let draft = null; // {name, emoji} while personalizing
+
+  const avatar = h("button", { class: "account-btn", type: "button", "aria-label": "Account", onclick: () => open() });
   const card = h("div", { class: "modal-card", role: "dialog", "aria-modal": "true", "aria-label": "Account" });
   const overlay = h("div", { class: "modal", hidden: true, onclick: (e) => e.target === overlay && close() }, card);
   document.addEventListener("keydown", (e) => e.key === "Escape" && close());
 
-  function open() {
+  function open(which = "main") {
+    view = which;
+    draft = null;
     overlay.hidden = false;
     render();
+    // The profile (name, avatar) is one read, cached; render again once it is in.
+    loadProfile().then(() => !overlay.hidden && render(), () => {});
   }
   function close() {
     overlay.hidden = true;
   }
 
-  async function run(fn) {
+  async function run(fn, describeError = authErrorMessage) {
     if (busy) return;
     busy = true;
     render();
@@ -38,7 +46,7 @@ export function createAccountUI() {
       await fn();
     } catch (e) {
       console.warn(e);
-      const message = authErrorMessage(e);
+      const message = describeError(e);
       if (message) toast(message);
     } finally {
       busy = false;
@@ -73,25 +81,35 @@ export function createAccountUI() {
       close();
     });
 
+  const closeButton = () => h("button", { class: "icon-btn", type: "button", "aria-label": "Close", onclick: close }, "✕");
+  const shownName = () => displayName(state.uid ?? "", state.profile?.name);
+
   function render() {
+    if (view === "personalize") return renderPersonalize();
     const a = state.account;
-    const closeBtn = h("button", { class: "icon-btn", type: "button", "aria-label": "Close", onclick: close }, "✕");
+
+    const personalize = h(
+      "button",
+      { class: "btn secondary", type: "button", disabled: busy, onclick: () => ((view = "personalize"), (draft = null), render()) },
+      "✏️ Personalize profile",
+    );
 
     if (a && !a.anonymous) {
       replaceChildren(
         card,
-        h("div", { class: "modal-head" }, h("h2", null, "Your account"), closeBtn),
+        h("div", { class: "modal-head" }, h("h2", null, "Your account"), closeButton()),
         h(
           "div",
           { class: "profile" },
-          avatarImage(a, "big"),
-          h("div", null, h("strong", null, a.name ?? "Signed in"), h("p", { class: "muted" }, a.email ?? "")),
+          avatarFor(a, "big"),
+          h("div", null, h("strong", null, shownName()), h("p", { class: "muted" }, a.email ?? "")),
         ),
         h(
           "p",
           { class: "note" },
-          `Your reviews appear as “${nickname(a.uid)}”. Your Google name and email are never shown to anyone else, and your reviews stay with you on any phone you sign in on.`,
+          `Your reviews appear as “${shownName()}”. Your Google name and email are never shown to anyone else, and your reviews stay with you on any phone you sign in on.`,
         ),
+        personalize,
         h("button", { class: "btn ghost", type: "button", disabled: busy, onclick: signOutNow }, "Sign out"),
       );
       return;
@@ -100,12 +118,12 @@ export function createAccountUI() {
     const anonymous = !!a;
     replaceChildren(
       card,
-      h("div", { class: "modal-head" }, h("h2", null, anonymous ? "Save your account" : "Sign in"), closeBtn),
+      h("div", { class: "modal-head" }, h("h2", null, anonymous ? "Save your account" : "Sign in"), closeButton()),
       anonymous
         ? h(
             "p",
             { class: "note" },
-            `You're using ThroneAdvisor without an account, as “${nickname(a.uid)}”. Your reviews are tied to this browser: clear its data or switch phones and you'd lose them. Save them to a Google account and they follow you everywhere.`,
+            `You're using ThroneAdvisor without an account, as “${shownName()}”. Your reviews are tied to this browser: clear its data or switch phones and you'd lose them. Save them to a Google account and they follow you everywhere.`,
           )
         : h("p", { class: "note" }, "Sign in to keep your reviews across devices. You can also just rate toilets without an account."),
       googleButton(anonymous ? "Save my account with Google" : "Continue with Google", save, busy),
@@ -116,21 +134,120 @@ export function createAccountUI() {
             "I already saved an account on another device",
           )
         : null,
+      personalize,
       h("p", { class: "fineprint" }, "We only use Google to recognise you. Nobody else sees your name or email."),
     );
   }
 
+  // ---- personalization -----------------------------------------------------------------
+
+  function renderPersonalize() {
+    const current = state.profile ?? { name: null, emoji: null };
+    draft ??= { name: current.name ?? "", emoji: current.emoji ?? null };
+    const generated = displayName(state.uid ?? "", null);
+
+    const preview = h("p", { class: "preview" });
+    const problem = h("p", { class: "problem", "aria-live": "polite" });
+    const saveBtn = h("button", { class: "btn primary", type: "button", onclick: onSave }, "Save profile");
+    const input = h("input", {
+      type: "text",
+      maxlength: 20,
+      autocomplete: "off",
+      spellcheck: "false",
+      placeholder: state.uid ? generated : "Choose a username",
+      "aria-label": "Username",
+      oninput: (e) => {
+        draft.name = e.target.value;
+        refresh();
+      },
+    });
+    input.value = draft.name;
+
+    const grid = h(
+      "div",
+      { class: "emoji-grid", role: "group", "aria-label": "Avatar" },
+      EMOJIS.map((em) =>
+        h(
+          "button",
+          {
+            class: `emoji ${draft.emoji === em ? "picked" : ""}`,
+            type: "button",
+            "aria-pressed": draft.emoji === em,
+            onclick: () => {
+              draft.emoji = draft.emoji === em ? null : em; // tap again to remove
+              [...grid.children].forEach((b) => {
+                const on = b.textContent === draft.emoji;
+                b.classList.toggle("picked", on);
+                b.setAttribute("aria-pressed", String(on));
+              });
+              refresh();
+            },
+          },
+          em,
+        ),
+      ),
+    );
+
+    function refresh() {
+      const bad = nameProblem(draft.name);
+      problem.textContent = bad ?? "";
+      const shown = draft.name.trim() || generated;
+      replaceChildren(preview, "Your reviews will show as ", h("strong", null, `${draft.emoji ? draft.emoji + " " : ""}${shown}`));
+      const changed = (draft.name.trim() || null) !== (current.name ?? null) || (draft.emoji ?? null) !== (current.emoji ?? null);
+      saveBtn.disabled = busy || !!bad || !changed;
+    }
+
+    function onSave() {
+      run(
+        async () => {
+          await updateProfile({ name: draft.name.trim() || null, emoji: draft.emoji });
+          toast("Profile saved ✓");
+          view = "main";
+          draft = null;
+        },
+        (e) => (e?.code === "permission-denied" ? "That username isn't allowed. Try another one." : errorMessage(e)),
+      );
+    }
+
+    replaceChildren(
+      card,
+      h(
+        "div",
+        { class: "modal-head" },
+        h("button", { class: "icon-btn", type: "button", "aria-label": "Back", onclick: () => ((view = "main"), (draft = null), render()) }, "←"),
+        h("h2", null, "Personalize profile"),
+        closeButton(),
+      ),
+      h("label", { class: "field" }, h("span", null, "Username"), input, problem),
+      h("button", { class: "linklike", type: "button", onclick: () => ((draft.name = ""), (input.value = ""), refresh()) }, "Use my random name"),
+      h("div", { class: "field" }, h("span", null, "Avatar"), grid),
+      preview,
+      saveBtn,
+    );
+    refresh();
+  }
+
+  // ---- the top-right button -----------------------------------------------------------
+
   const sync = () => {
     const a = state.account;
-    replaceChildren(avatar, a && !a.anonymous && a.photoURL ? avatarImage(a, "small") : "👤");
+    const em = state.profile?.emoji;
+    replaceChildren(avatar, em ? h("span", { class: "emoji-avatar" }, em) : a && !a.anonymous && a.photoURL ? avatarImage(a, "small") : "👤");
     avatar.classList.toggle("needs-save", !!a?.anonymous); // dot: reviews not saved to an account yet
-    if (!overlay.hidden) render();
+    if (!overlay.hidden && !busy && view === "main") render();
   };
   subscribe(sync);
   sync();
 
   document.body.append(overlay);
   return { button: avatar, open };
+}
+
+/** Big/small avatar: the chosen emoji, else the Google photo, else an initial. */
+function avatarFor(account, size) {
+  const em = state.profile?.emoji;
+  if (em) return h("span", { class: `avatar ${size} initial` }, em);
+  return avatarImage(account, size);
 }
 
 function avatarImage(account, size) {

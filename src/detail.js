@@ -5,7 +5,7 @@ import { CAMPUS } from "./config.js";
 import { h, replaceChildren, toast } from "./dom.js";
 import { timeAgo } from "./geo.js";
 import { toiletPlace, toiletTitle } from "./labels.js";
-import { nickname } from "./nickname.js";
+import { displayName } from "./profile.js";
 import { categoryScores, formatScore, overallScore, reviewScore, scoreColor } from "./scoring.js";
 import { db } from "./firebase.js";
 import { shouldPromptSave, snoozeSavePrompt } from "./account-ui.js";
@@ -129,14 +129,15 @@ export function createDetail({ onClose, onSaveAccount }) {
     );
   }
 
-  let renderedUid; // the reviews list labels "(you)", so it must be redrawn when the user changes
+  let renderedKey; // the reviews list labels "(you)" and shows your name: redraw when the user or profile changes
 
   function render() {
     if (!toilet) return;
     renderSummary();
     renderActions();
-    if (renderedUid !== state.uid) {
-      renderedUid = state.uid;
+    const key = `${state.uid}|${state.profile?.name}|${state.profile?.emoji}`;
+    if (renderedKey !== key) {
+      renderedKey = key;
       renderReviews();
     }
     // The prompt disappears by itself once the account has been saved.
@@ -374,15 +375,21 @@ export function createDetail({ onClose, onSaveAccount }) {
     );
   }
 
-  function reviewCard(r) {
-    const mineCard = r.uid === state.uid;
+  function reviewCard(card) {
+    const mineCard = card.uid === state.uid;
+    // Your own reviews always show your current profile; other people's show what they chose when they posted.
+    const r = {
+      ...card,
+      name: displayName(card.uid, mineCard && state.profile ? state.profile.name : card.by),
+      emoji: mineCard && state.profile ? state.profile.emoji : card.em,
+    };
     return h(
       "article",
       { class: "review" },
       h(
         "header",
         null,
-        h("strong", null, mineCard ? `${nickname(r.uid)} (you)` : nickname(r.uid)),
+        h("strong", null, r.emoji ? `${r.emoji} ` : "", r.name, mineCard ? " (you)" : ""),
         h("span", { class: "muted" }, timeAgo(r.createdMs)),
         h("span", { class: "chip", style: `background:${scoreColor(reviewScore(r))}` }, formatScore(reviewScore(r))),
       ),

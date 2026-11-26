@@ -395,3 +395,52 @@ h2, h3, p { margin: 0; }
   .modal { align-items: center; }
   .modal-card { border-radius: var(--radius); }
 }
+
+/* ---- profile: "Me" tab and personalization --------------------------------------------------- */
+
+.me-head { display: flex; align-items: center; gap: 12px; padding: 6px 2px 10px; }
+.me-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.me-name strong { font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.btn.small { min-height: 36px; padding: 6px 12px; font-size: 14px; }
+
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; }
+.stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 4px;
+  border-radius: 12px;
+  background: #faf5ef;
+}
+.stat strong { font-size: 20px; line-height: 1.1; color: var(--accent); }
+.stat span { font-size: 12px; color: var(--muted); }
+.list-title { font-size: 14px; color: var(--muted); font-weight: 600; margin: 8px 2px 2px; }
+
+.avatar.big { font-size: 28px; }
+.emoji-avatar { font-size: 24px; line-height: 1; }
+
+.field { display: grid; gap: 6px; font-weight: 600; }
+.field input {
+  font: inherit;
+  font-weight: 400;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  width: 100%;
+}
+.problem { min-height: 1.2em; color: var(--bad); font-size: 13px; font-weight: 400; }
+.emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+.emoji {
+  aspect-ratio: 1;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  background: #faf5ef;
+  font-size: 22px;
+  padding: 0;
+  line-height: 1;
+}
+.emoji.picked { border-color: var(--accent); background: var(--accent-soft); }
+.preview { text-align: center; color: var(--muted); }
+.preview strong { color: var(--ink); }
+.modal-head { gap: 8px; }
+.modal-head h2 { flex: 1; }

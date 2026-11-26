@@ -1,9 +1,12 @@
-// Bottom list: closest thrones and top-rated thrones. Computed locally from the toilet
-// registry + the stats document, so browsing it costs no reads.
+// Bottom list: closest thrones, top-rated thrones, and "Me" (your profile stats and reviews).
+// Computed locally from the toilet registry, the stats document and your profile, so
+// browsing it costs no extra reads.
+import { loadProfile } from "./actions.js";
 import { CAMPUS } from "./config.js";
 import { h, replaceChildren } from "./dom.js";
-import { distanceMeters, formatDistance, inBounds } from "./geo.js";
+import { distanceMeters, formatDistance, inBounds, timeAgo } from "./geo.js";
 import { toiletPlace, toiletTitle } from "./labels.js";
+import { displayName, myReviewList, profileStats } from "./profile.js";
 import { formatScore, overallScore, rankScore, scoreColor } from "./scoring.js";
 import { occupancy, state } from "./store.js";
 
@@ -60,20 +63,85 @@ function row({ t, meters }, onPick) {
   );
 }
 
-export function createList({ onPick }) {
+function stat(value, label) {
+  return h("div", { class: "stat" }, h("strong", null, value), h("span", null, label));
+}
+
+/** Profile header, numbers and the user's own reviews. */
+function meView(onPick, onEditProfile) {
+  const profile = state.profile;
+  if (!state.uid) {
+    return h("p", { class: "empty" }, "Rate a toilet and your profile starts here: your reviews, your visits and your favourite thrones 👑");
+  }
+  if (!profile) return h("p", { class: "empty" }, "Loading your profile…");
+
+  const stats = profileStats(profile);
+  const reviews = myReviewList(profile).filter((r) => state.byId.has(r.id));
+  return [
+    h(
+      "div",
+      { class: "me-head" },
+      h("span", { class: "avatar big initial" }, profile.emoji ?? "🚽"),
+      h("div", { class: "me-name" }, h("strong", null, displayName(state.uid, profile.name)), h("span", { class: "muted" }, "Your profile")),
+      h("button", { class: "btn secondary small", type: "button", onclick: onEditProfile }, "✏️ Edit"),
+    ),
+    h(
+      "div",
+      { class: "stats" },
+      stat(stats.reviews, "reviews"),
+      stat(stats.visits, "visits"),
+      stat(stats.toilets, "toilets"),
+      stat(stats.avgGiven == null ? "–" : stats.avgGiven.toFixed(1), "avg score"),
+    ),
+    reviews.length
+      ? [
+          h("h3", { class: "list-title" }, "Your reviews"),
+          reviews.map((r) => {
+            const t = state.byId.get(r.id);
+            const visits = Number(profile.vs?.[r.id] ?? 0);
+            return h(
+              "button",
+              { class: "row", type: "button", onclick: () => onPick(t) },
+              h("span", { class: "bubble", style: `background:${scoreColor(r.score)}` }, formatScore(r.score)),
+              h(
+                "span",
+                { class: "row-main" },
+                h("span", { class: "row-title" }, toiletTitle(t)),
+                h(
+                  "span",
+                  { class: "row-sub" },
+                  toiletPlace(t),
+                  r.at ? ` · ${timeAgo(r.at)}` : "",
+                  visits ? ` · ${visits} visit${visits === 1 ? "" : "s"}` : "",
+                ),
+              ),
+            );
+          }),
+        ]
+      : h("p", { class: "empty" }, "You haven't reviewed a toilet yet. Pick one on the map and rate it 🧻"),
+  ];
+}
+
+export function createList({ onPick, onEditProfile, onExpand }) {
   const el = h("div", { class: "list" });
 
   function render() {
-    const rows = tab === "nearby" ? nearby() : top();
     const hasPosition = originPoint() != null;
+    const tabs = h(
+      "div",
+      { class: "tabs", role: "tablist" },
+      tabButton("nearby", hasPosition ? "Near you" : "Near campus centre"),
+      tabButton("top", "Top rated"),
+      tabButton("me", "Me"),
+    );
+    if (tab === "me") {
+      replaceChildren(el, tabs, meView(onPick, onEditProfile));
+      return;
+    }
+    const rows = tab === "nearby" ? nearby() : top();
     replaceChildren(
       el,
-      h(
-        "div",
-        { class: "tabs", role: "tablist" },
-        tabButton("nearby", hasPosition ? "Near you" : "Near campus centre"),
-        tabButton("top", "Top rated"),
-      ),
+      tabs,
       rows.length
         ? rows.map((r) => row(r, onPick))
         : h("p", { class: "empty" }, "No ratings yet. Be the first to review a throne 👑"),
@@ -90,6 +158,10 @@ export function createList({ onPick }) {
         "aria-selected": tab === id,
         onclick: () => {
           tab = id;
+          if (id === "me") {
+            onExpand(); // the profile needs room
+            loadProfile().then(render, () => {}); // one read, cached
+          }
           render();
         },
       },

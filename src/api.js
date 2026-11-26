@@ -30,6 +30,7 @@ const statsRef = (db, campus) => doc(db, "campuses", campus, "meta", "stats");
 const liveRef = (db, campus) => doc(db, "campuses", campus, "meta", "live");
 const reviewRef = (db, campus, toiletId, uid) =>
   doc(db, "campuses", campus, "toilets", toiletId, "reviews", uid);
+const userRef = (db, uid) => doc(db, "users", uid);
 
 // ---- reads ---------------------------------------------------------------
 
@@ -58,6 +59,8 @@ function toReview(snap) {
     c: r.c,
     k: r.k,
     text: r.text ?? "",
+    by: r.by ?? null, // chosen username (absent: show the generated nickname)
+    em: r.em ?? null, // chosen avatar emoji
     createdAt: r.createdAt,
     createdMs: r.createdAt?.toMillis?.() ?? Date.now(),
   };
@@ -80,6 +83,16 @@ export async function fetchReviews(db, campus, toiletId, cursor = null) {
 export async function fetchMyReview(db, campus, toiletId, uid) {
   const snap = await getDoc(reviewRef(db, campus, toiletId, uid));
   return snap.exists() ? toReview(snap) : null;
+}
+
+/**
+ * The user's private profile: { name, emoji, rv: {toiletId: {p,c,k,at}}, vs: {toiletId: count} }.
+ * One read. A user who never wrote anything has no document: that is an empty profile.
+ */
+export async function fetchProfile(db, uid) {
+  const snap = await getDoc(userRef(db, uid));
+  const d = snap.exists() ? snap.data() : {};
+  return { name: d.name ?? null, emoji: d.emoji ?? null, rv: d.rv ?? {}, vs: d.vs ?? {} };
 }
 
 // ---- writes --------------------------------------------------------------
@@ -121,8 +134,10 @@ function statsDelta(toiletId, { n = 0, p = 0, c = 0, k = 0, v = 0 }) {
  * Create or edit the user's review (one per user per toilet) and fold the change into the
  * campus stats, atomically. `previous` is the user's existing review, or null.
  * With `countVisit` the same write also adds one visit to the toilet's usage counter.
+ * `profile` ({name, emoji}) is copied onto the review so other people see the chosen
+ * username without any extra read. The user's own profile history is updated in the same batch.
  */
-export function saveReview(db, campus, uid, toiletId, { p, c, k, text, countVisit = false }, previous) {
+export function saveReview(db, campus, uid, toiletId, { p, c, k, text, countVisit = false }, previous, profile = null) {
   const trimmed = (text ?? "").trim();
   return commitWithBootstrap(db, campus, () => {
     const batch = writeBatch(db);
@@ -133,6 +148,8 @@ export function saveReview(db, campus, uid, toiletId, { p, c, k, text, countVisi
         c,
         k,
         text: trimmed ? trimmed : deleteField(),
+        by: profile?.name ?? deleteField(),
+        em: profile?.emoji ?? deleteField(),
         updatedAt: serverTimestamp(),
       });
     } else {
@@ -141,6 +158,8 @@ export function saveReview(db, campus, uid, toiletId, { p, c, k, text, countVisi
         c,
         k,
         ...(trimmed ? { text: trimmed } : {}),
+        ...(profile?.name ? { by: profile.name } : {}),
+        ...(profile?.emoji ? { em: profile.emoji } : {}),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -154,6 +173,14 @@ export function saveReview(db, campus, uid, toiletId, { p, c, k, text, countVisi
         k: k - (previous?.k ?? 0),
         v: countVisit ? 1 : 0,
       }),
+    );
+    batch.set(
+      userRef(db, uid),
+      {
+        rv: { [toiletId]: { p, c, k, at: Date.now() } },
+        ...(countVisit ? { vs: { [toiletId]: increment(1) } } : {}),
+      },
+      { merge: true },
     );
     return batch;
   });
@@ -170,8 +197,8 @@ export function checkIn(db, campus, uid, toiletId, minutes = CHECK_IN_MINUTES) {
   );
 }
 
-/** Leave the toilet. With `countVisit` the visit is added to the toilet's usage counter. */
-export function checkOut(db, campus, toiletId, { countVisit }) {
+/** Leave the toilet. With `countVisit` the visit is added to the toilet's counter (and to `uid`'s profile). */
+export function checkOut(db, campus, toiletId, { countVisit, uid = null }) {
   return commitWithBootstrap(db, campus, () => {
     const batch = writeBatch(db);
     batch.update(liveRef(db, campus), {
@@ -179,7 +206,32 @@ export function checkOut(db, campus, toiletId, { countVisit }) {
       ref: toiletId,
       at: serverTimestamp(),
     });
-    if (countVisit) batch.update(statsRef(db, campus), statsDelta(toiletId, { v: 1 }));
+    if (countVisit) {
+      batch.update(statsRef(db, campus), statsDelta(toiletId, { v: 1 }));
+      if (uid) batch.set(userRef(db, uid), { vs: { [toiletId]: increment(1) } }, { merge: true });
+    }
     return batch;
   });
+}
+
+/**
+ * Save the username / avatar (null clears one back to the default) and carry it over to the
+ * user's existing reviews, which is how other people see it. `reviewIds` are the toilets the
+ * user has reviewed (the keys of their profile's `rv`).
+ */
+export async function saveProfile(db, campus, uid, { name, emoji }, reviewIds) {
+  const BATCH = 400; // Firestore allows 500 writes per batch
+  const chunks = [];
+  for (let i = 0; i < reviewIds.length; i += BATCH) chunks.push(reviewIds.slice(i, i + BATCH));
+  if (!chunks.length) chunks.push([]);
+  for (const [i, ids] of chunks.entries()) {
+    const batch = writeBatch(db);
+    if (i === 0) {
+      batch.set(userRef(db, uid), { name: name ?? deleteField(), emoji: emoji ?? deleteField() }, { merge: true });
+    }
+    for (const id of ids) {
+      batch.update(reviewRef(db, campus, id, uid), { by: name ?? deleteField(), em: emoji ?? deleteField() });
+    }
+    await batch.commit();
+  }
 }

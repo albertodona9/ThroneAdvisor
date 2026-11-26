@@ -7,7 +7,7 @@ _TODO_
 [ ] Make app a bit "less polished" with poops ratings based on the overalls (stinky, medium, excellent etc.)
 [ ] trophies for reviewers, add monthly leaderboards and yearly throne kings and queens
 [ ] login options and cache storing on the phone so no need to login each time
-[ ]
+[ ] Personal Heat Map of campus
 
 Find a free toilet on campus and rate how nice it is to sit in. Built for DTU Lyngby on top of
 [MazeMap](https://www.mazemap.com), hosted on Firebase.
@@ -18,7 +18,12 @@ Find a free toilet on campus and rate how nice it is to sit in. Built for DTU Ly
 - **Nobody has to check in.** Most people will just review afterwards: posting a review can also count as a visit
   ("I used this toilet" checkbox). "I'm going in" / "I'm done" still exists as an optional live status, the groundwork
   for a future live "which toilets are taken" notification.
-- No account: users get an anonymous Firebase session on their first write and a made-up nickname ("Regal Plunger").
+- **Accounts that survive a lost phone.** Everyone starts anonymous (an anonymous Firebase session on their first write, plus a
+  made-up nickname like "Regal Plunger"). After their first review they are offered to **save their account with Google**, which
+  links the Google login to that same user: the uid, and so every review already written, stays theirs and follows them to a new
+  phone. Reviews show the username (a generated nickname unless they chose one), never the Google name or email.
+- **Profiles.** The top-right button opens the account window, where "Personalize profile" sets a username and an avatar. The **Me** tab in
+  the bottom sheet shows your numbers (reviews, visits, toilets, average score) and every review you wrote.
 
 ## Run it locally
 
@@ -49,12 +54,21 @@ Firestore bills per document read, so the whole design is about reading few docu
 | Every toilet's score sums + visit counter     | One document: `campuses/{campus}/meta/stats`   | 1 read per refresh                                                       |
 | Who is in which toilet right now              | One document: `campuses/{campus}/meta/live`    | 1 read per refresh                                                       |
 | Reviews                                       | `campuses/{campus}/toilets/{id}/reviews/{uid}` | ≤ 10 reads, only when someone opens that toilet (cached for the session) |
+| A user's profile: name, avatar, own reviews and visits | `users/{uid}` (private to its owner)  | 1 read per session, only for users who have an account/session           |
 
-Opening the app costs **2 reads**, regardless of how many toilets exist. While the tab is visible it
+Opening the app costs **2 reads** (**3** for a returning user, whose profile is loaded too), regardless of how many toilets exist. While the tab is visible it
 re-reads `live` every 2 min and `stats` every 5 min (see `src/config.js`; `live` is polled slowly because few people check in
 for now); hidden tabs don't poll. A user checking one toilet's reviews adds ≤ 10 reads. A busy day with 1,000 sessions of
-~10 minutes each is roughly 1,000 × (2 + 5 + 2 + 10) ≈ 19k reads, inside the 50k/day free tier.
+~10 minutes each is roughly 1,000 × (3 + 5 + 2 + 10) ≈ 20k reads, inside the 50k/day free tier.
 There are no real-time listeners on purpose: a listener is billed one read per change per connected client.
+
+**Profiles.** `users/{uid}` holds the chosen username and avatar plus the user's own history (`rv`: the scores they gave per toilet,
+`vs`: their visits per toilet), which is what the "Me" tab shows without reading any other document. It is written in the same batch
+as the review or visit it records. Only the username and avatar are ever public, and only by being copied onto the user's review
+documents (`by`, `em`), so other people's names on a toilet's reviews cost no extra reads. The rules constrain both (3-20
+letters/digits/spaces/`_.-`, 16 allowed avatars). Renaming rewrites the user's own reviews in one batch; the rules allow that
+without touching scores or stats. Reviews written before profiles existed aren't in `rv`, so they don't appear in "Me" until the
+review is edited.
 
 Scores are stored as **sums** (`n` reviews, `p`/`c`/`k` sums, `v` visits), so they can be updated with
 atomic increments and validated by the security rules. Review lists are capped at 25 documents per query by the rules.
@@ -73,6 +87,21 @@ The "in use" state expires by itself (10 min) so a forgotten check-in never bloc
 - `stats` and `live` are single documents: Firestore sustains about 1 write/second per document, and a document is limited
   to 1 MiB (≈ 10,000 toilets). Both are fine for a campus; shard by building if a campus ever outgrows that.
 - Reviews can be edited but not deleted yet (deleting would need the aggregate to be decremented, which the rules don't allow yet).
+
+## Accounts
+
+Why not just rely on the phone? The anonymous session lives in browser storage, which Safari erases after about a week without a
+visit and which is lost with a cleared browser or a new phone. Linking Google fixes that at no cost (Firebase Auth is free at this
+scale). Code: `src/account.js` (auth logic), `src/account-ui.js` (button, account window, personalization) and `src/profile.js`
+(username rules, avatars, the numbers on the Me tab).
+
+**One-time setup:** Firebase console -> Authentication -> Sign-in method -> **Google -> Enable** (pick a support email).
+`throneadvisor-0.web.app` and `throneadvisor-0.firebaseapp.com` are authorised sign-in domains by default; add your own domain under
+Authentication -> Settings if you use one. Locally the Auth emulator provides a fake Google popup, so it works without any setup.
+
+Not built yet: Microsoft sign-in (DTU students have Microsoft accounts; needs an Azure app registration), a public profile page and
+leaderboards (a user's numbers are private for now; public ones need a server-verified aggregate to be trustworthy), and moderation
+of usernames (they are validated for format only, not for content).
 
 ## Credentials and safety
 
@@ -115,10 +144,11 @@ src/
   actions.js   user actions: check in/out, review; optimistic local updates
   store.js     tiny reactive state; sync.js: polling; scoring.js: score maths
   layout.js    nudges overlapping toilet bubbles apart (display only)
-  list.js, detail.js, dom.js, style.css
+  account.js, account-ui.js, profile.js   Google linking, account window + personalization, profile maths
+  list.js (Near you / Top rated / Me), detail.js, dom.js, style.css
   data/        generated toilet registry (npm run toilets:fetch)
 scripts/       fetch-toilets.mjs (MazeMap -> JSON), seed-emulator.mjs
-tests/         security-rules tests
+tests/         security-rules tests, layout and profile unit tests
 firestore.rules  firebase.json  firestore.indexes.json
 _legacy/       the previous prototype, safe to delete
 ```

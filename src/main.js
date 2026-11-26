@@ -15,7 +15,11 @@ import { state, subscribe, update } from "./store.js";
 
 const account = createAccountUI();
 const detail = createDetail({ onClose: deselect, onSaveAccount: account.open });
-const list = createList({ onPick: select });
+const list = createList({
+  onPick: select,
+  onEditProfile: () => account.open("personalize"),
+  onExpand: () => sheet.classList.add("expanded"),
+});
 
 const offlineChip = h("span", { class: "chip offline", hidden: true }, "offline");
 const handle = h("button", {

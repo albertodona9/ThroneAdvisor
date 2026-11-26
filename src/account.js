@@ -11,6 +11,7 @@ import {
   signOut,
 } from "firebase/auth";
 import { auth } from "./firebase.js";
+import { loadProfile } from "./actions.js";
 import { setCheckIn, state, update } from "./store.js";
 
 const provider = new GoogleAuthProvider();
@@ -36,8 +37,11 @@ export function initAccount() {
       // Signed out or switched to another user: nothing cached for the previous one applies.
       state.myReviews.clear();
       if (state.checkIn) setCheckIn(null);
+      state.profile = null;
     }
     update({ uid, account: toAccount(user) });
+    // Users who already have an account get their profile (name, avatar, history) loaded: one read.
+    if (uid && !state.profile) loadProfile().catch((e) => console.warn("profile load failed", e));
   });
 }
 

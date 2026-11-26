@@ -18,7 +18,7 @@ import {
   updateDoc,
   writeBatch,
 } from "firebase/firestore";
-import { checkIn, checkOut, fetchLive, fetchMyReview, fetchReviews, fetchStats, saveReview } from "../src/api.js";
+import { checkIn, checkOut, fetchLive, fetchMyReview, fetchProfile, fetchReviews, fetchStats, saveProfile, saveReview } from "../src/api.js";
 
 const CAMPUS = "test";
 const T = "255568"; // a toilet id
@@ -281,5 +281,105 @@ describe("visits", () => {
       [`t.${T}.k`]: increment(0), [`t.${T}.v`]: increment(5), ref: T, at: serverTimestamp(),
     });
     await assertFails(batch.commit());
+  });
+});
+
+describe("profiles", () => {
+  const userDoc = (db, uid) => doc(db, "users", uid);
+  const reviewDoc = (db, id, uid) => doc(db, "campuses", CAMPUS, "toilets", id, "reviews", uid);
+  const fox = { name: "Regal Fox", emoji: "🦊" };
+
+  it("keeps a profile private to its owner", async () => {
+    await assertSucceeds(setDoc(userDoc(as("alice"), "alice"), { name: "Alice A" }));
+    await assertSucceeds(getDoc(userDoc(as("alice"), "alice")));
+    await assertFails(getDoc(userDoc(as("bob"), "alice")));
+    await assertFails(getDoc(userDoc(anon(), "alice")));
+    await assertFails(setDoc(userDoc(as("bob"), "alice"), { name: "Hacked" }));
+    await assertFails(getDocs(collection(as("alice"), "users")));
+  });
+
+  it("accepts good usernames and rejects bad ones", async () => {
+    const db = as("alice");
+    for (const name of ["Regal Plunger", "Åse_42", "a.b-c", "Jürgen Müller", "abc", "x".repeat(20)]) {
+      await assertSucceeds(setDoc(userDoc(db, "alice"), { name }));
+    }
+    for (const name of ["ab", "x".repeat(21), " leading", "trailing ", "bad!name", "<script>", "-dash", "emoji😀name"]) {
+      await assertFails(setDoc(userDoc(db, "alice"), { name }));
+    }
+  });
+
+  it("only accepts avatars from the allowed list, and no unknown fields", async () => {
+    const db = as("alice");
+    await assertSucceeds(setDoc(userDoc(db, "alice"), { emoji: "🦊" }));
+    await assertFails(setDoc(userDoc(db, "alice"), { emoji: "💩" }));
+    await assertFails(setDoc(userDoc(db, "alice"), { emoji: "not an emoji" }));
+    await assertFails(setDoc(userDoc(db, "alice"), { name: "Alice A", admin: true }));
+  });
+
+  it("records a review and its visit in the user's own history, in the same batch", async () => {
+    const db = as("alice");
+    await assertSucceeds(saveReview(db, CAMPUS, "alice", T, { p: 8, c: 6, k: 7, countVisit: true }, null, fox));
+    await assertSucceeds(saveReview(db, CAMPUS, "alice", U, { p: 5, c: 5, k: 5 }, null, fox));
+    const profile = await fetchProfile(db, "alice");
+    expect(profile.rv[T]).toMatchObject({ p: 8, c: 6, k: 7 });
+    expect(profile.rv[U]).toMatchObject({ p: 5, c: 5, k: 5 });
+    expect(profile.vs).toEqual({ [T]: 1 });
+    // the public name + avatar travel on the review itself
+    const mine = await fetchMyReview(db, CAMPUS, T, "alice");
+    expect(mine).toMatchObject({ by: "Regal Fox", em: "🦊" });
+  });
+
+  it("counts a checked-out visit in the user's history", async () => {
+    const checkedIn = () => seed((d) => updateDoc(metaDoc(d, "live"), { [`occ.${T}`]: { u: "alice", s: minutesAgo(2), d: 10 } }));
+    const db = as("alice");
+    await checkedIn();
+    await assertSucceeds(checkOut(db, CAMPUS, T, { countVisit: true, uid: "alice" }));
+    expect((await fetchProfile(db, "alice")).vs).toEqual({ [T]: 1 });
+    await checkedIn();
+    await assertSucceeds(checkOut(db, CAMPUS, T, { countVisit: true, uid: "alice" }));
+    expect((await fetchProfile(db, "alice")).vs).toEqual({ [T]: 2 });
+  });
+
+  it("rejects a review carrying a bad username or avatar", async () => {
+    const db = as("alice");
+    await assertFails(saveReview(db, CAMPUS, "alice", T, { p: 5, c: 5, k: 5 }, null, { name: "<b>x</b>", emoji: null }));
+    await assertFails(saveReview(db, CAMPUS, "alice", T, { p: 5, c: 5, k: 5 }, null, { name: null, emoji: "💩" }));
+    expect(await fetchStats(db, CAMPUS)).toEqual({});
+  });
+
+  it("renames the user's existing reviews in one go, without touching scores or stats", async () => {
+    const db = as("alice");
+    await saveReview(db, CAMPUS, "alice", T, { p: 8, c: 6, k: 7 }, null, null);
+    await saveReview(db, CAMPUS, "alice", U, { p: 4, c: 4, k: 4 }, null, null);
+    const before = await fetchStats(db, CAMPUS);
+    await assertSucceeds(saveProfile(db, CAMPUS, "alice", fox, [T, U]));
+    expect(await fetchMyReview(db, CAMPUS, T, "alice")).toMatchObject({ by: "Regal Fox", em: "🦊", p: 8, c: 6, k: 7 });
+    expect(await fetchMyReview(db, CAMPUS, U, "alice")).toMatchObject({ by: "Regal Fox", em: "🦊", p: 4 });
+    expect(await fetchStats(db, CAMPUS)).toEqual(before);
+    expect((await fetchProfile(db, "alice")).name).toBe("Regal Fox");
+    // clearing goes back to the default
+    await assertSucceeds(saveProfile(db, CAMPUS, "alice", { name: null, emoji: null }, [T, U]));
+    expect(await fetchMyReview(db, CAMPUS, T, "alice")).toMatchObject({ by: null, em: null });
+    expect((await fetchProfile(db, "alice")).name).toBeNull();
+  });
+
+  it("rejects renaming someone else's review", async () => {
+    await saveReview(as("alice"), CAMPUS, "alice", T, { p: 8, c: 6, k: 7 }, null, null);
+    await assertFails(updateDoc(reviewDoc(as("mallory"), T, "alice"), { by: "Mallory Was Here" }));
+  });
+
+  it("rejects using a rename to change scores or text", async () => {
+    const db = as("alice");
+    await saveReview(db, CAMPUS, "alice", T, { p: 8, c: 6, k: 7 }, null, null);
+    await assertFails(updateDoc(reviewDoc(db, T, "alice"), { by: "Fine Name", p: 10 }));
+    await assertFails(updateDoc(reviewDoc(db, T, "alice"), { text: "sneaky" }));
+    await assertFails(updateDoc(reviewDoc(db, T, "alice"), { by: "bad!name" }));
+    await assertFails(updateDoc(reviewDoc(db, T, "alice"), { em: "💩" }));
+  });
+
+  it("lets a user delete their own profile, and nobody else's", async () => {
+    await assertSucceeds(setDoc(userDoc(as("alice"), "alice"), { name: "Alice A" }));
+    await assertFails(deleteDoc(userDoc(as("bob"), "alice")));
+    await assertSucceeds(deleteDoc(userDoc(as("alice"), "alice")));
   });
 });

@@ -5,6 +5,7 @@ rules_version = '2';
 //   campuses/{campus}/meta/stats                      one doc with every toilet's score sums
 //   campuses/{campus}/meta/live                       one doc with every toilet currently in use
 //   campuses/{campus}/toilets/{id}/reviews/{uid}      one review per user per toilet
+//   users/{uid}                                       a user's private profile (see below)
 //
 // The map needs every toilet's score, so those live in ONE document: opening the app
 // costs a single read no matter how many toilets exist. There are no Cloud Functions,
@@ -22,6 +23,11 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // Shared by the campus rules and the profile rules below.
+    function signedIn() {
+      return request.auth != null;
+    }
     match /campuses/{campus} {
 
       // ---- helpers ---------------------------------------------------------
@@ -36,9 +42,6 @@ service cloud.firestore {
         return /databases/$(database)/documents/campuses/$(campus)/toilets/$(id)/reviews/$(uid);
       }
 
-      function signedIn() {
-        return request.auth != null;
-      }
       function isToiletId(id) {
         return id is string && id.matches('^[0-9]{1,12}$');
       }
@@ -148,25 +151,69 @@ service cloud.firestore {
           && validReview(request.resource.data)
           && request.resource.data.createdAt == request.time
           && statsTouched(id);
-        allow update: if signedIn() && request.auth.uid == uid
-          && validReview(request.resource.data)
-          && request.resource.data.createdAt == resource.data.createdAt
-          && statsTouched(id);
+        allow update: if signedIn() && request.auth.uid == uid && (
+          // changing the scores / text: must come with the matching stats change
+          (validReview(request.resource.data)
+            && request.resource.data.createdAt == resource.data.createdAt
+            && statsTouched(id))
+          // changing only the displayed name / avatar (a profile rename): no stats involved
+          || validRename(request.resource.data)
+        );
         allow delete: if false;
       }
 
       function validReview(r) {
-        return r.keys().hasOnly(['p', 'c', 'k', 'text', 'createdAt', 'updatedAt'])
+        return r.keys().hasOnly(['p', 'c', 'k', 'text', 'by', 'em', 'createdAt', 'updatedAt'])
           && r.keys().hasAll(['p', 'c', 'k', 'createdAt', 'updatedAt'])
           && isScore(r.p) && isScore(r.c) && isScore(r.k)
           && r.updatedAt == request.time
-          && (!('text' in r) || (r.text is string && r.text.size() >= 1 && r.text.size() <= 280));
+          && (!('text' in r) || (r.text is string && r.text.size() >= 1 && r.text.size() <= 280))
+          && validDisplay(r);
+      }
+
+      // Only `by` / `em` differ from what is stored, and they are valid.
+      function validRename(r) {
+        return r.diff(resource.data).affectedKeys().hasOnly(['by', 'em']) && validDisplay(r);
       }
 
       function statsTouched(id) {
         let s = getAfter(statsPath()).data;
         return s.at == request.time && s.ref == id;
       }
+    }
+
+    // ---- profiles: users/{uid} -------------------------------------------------
+    // Private to their owner (nobody else can read it). It holds the chosen username and
+    // avatar plus the owner's own history: `rv` {toiletId: {p, c, k, at}} (my reviews) and
+    // `vs` {toiletId: count} (my visits). Only the username/avatar ever become public, and
+    // only by being copied onto the owner's review documents, where they are validated too.
+    // `rv`/`vs` are the owner's own bookkeeping: bounded in size, not trusted by anyone else.
+
+    match /users/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid && validProfile(request.resource.data);
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    function validProfile(p) {
+      return p.keys().hasOnly(['name', 'emoji', 'rv', 'vs'])
+        && (!('name' in p) || validName(p.name))
+        && (!('emoji' in p) || allowedEmoji(p.emoji))
+        && (!('rv' in p) || (p.rv is map && p.rv.size() <= 2000))
+        && (!('vs' in p) || (p.vs is map && p.vs.size() <= 2000));
+    }
+
+    // Shown to other people (on reviews), so it is constrained: 3-20 letters, digits, spaces, _ . -
+    // starting and ending with a letter or digit.
+    function validName(n) {
+      return n is string && n.matches('^[\\p{L}\\p{N}][\\p{L}\\p{N} _.-]{1,18}[\\p{L}\\p{N}]$');
+    }
+    function allowedEmoji(e) {
+      return e in ['🚽', '👑', '🧻', '🦆', '🐢', '🦉', '🐙', '🦄', '🌵', '🍕', '🎩', '🦊', '🐸', '☕', '🚀', '🦔'];
+    }
+    // The optional public name/avatar carried by a review.
+    function validDisplay(r) {
+      return (!('by' in r) || validName(r.by)) && (!('em' in r) || allowedEmoji(r.em));
     }
   }
 }
