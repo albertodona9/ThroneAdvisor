@@ -37,3 +37,9 @@ export const CAMPUS = {
 export const LIVE_POLL_MS = 120_000; // who is in which toilet
 export const STATS_POLL_MS = 5 * 60_000; // scores and visit counters
 export const STALE_REFETCH_MS = 60_000; // refetch when the tab becomes visible again after this
+
+// How long a copy kept on the phone is reused on app open instead of reading Firestore.
+// Trade-off: a higher number saves more reads but shows older scores / live status.
+export const STATS_MAX_AGE_MS = 5 * 60_000; // scores and visit counters
+export const LIVE_MAX_AGE_MS = 90_000; // who is in which toilet
+export const PROFILE_MAX_AGE_MS = 6 * 3600_000; // the user's own profile (only they change it)

@@ -3,6 +3,7 @@ import { createAccountUI } from "./account-ui.js";
 import { initAccount } from "./account.js";
 import { CAMPUS } from "./config.js";
 import { createDetail } from "./detail.js";
+import { createInstallChip } from "./install.js";
 import { h, toast } from "./dom.js";
 import { inBounds } from "./geo.js";
 import { spreadOverlaps } from "./layout.js";
@@ -22,6 +23,7 @@ const list = createList({
 });
 
 const offlineChip = h("span", { class: "chip offline", hidden: true }, "offline");
+const installChip = createInstallChip();
 const handle = h("button", {
   class: "handle",
   type: "button",
@@ -36,7 +38,7 @@ const locate = h(
 );
 
 document.getElementById("app").append(
-  h("header", { class: "topbar" }, h("div", { class: "brand" }, h("span", null, "🚽"), " ThroneAdvisor"), offlineChip),
+  h("header", { class: "topbar" }, h("div", { class: "brand" }, h("span", null, "🚽"), " ThroneAdvisor"), offlineChip, installChip),
   account.button,
   locate,
   sheet,
@@ -116,11 +118,17 @@ subscribe((s) => {
 
 async function boot() {
   initAccount(); // restores a saved/anonymous session and keeps state.uid / state.account current
-  createMap({
-    onSelect: select,
-    onDeselect: () => state.selectedId && deselect(),
-    onFloorChange: (z) => update({ z }),
-  });
+  try {
+    createMap({
+      onSelect: select,
+      onDeselect: () => state.selectedId && deselect(),
+      onFloorChange: (z) => update({ z }),
+    });
+  } catch (e) {
+    // The map library comes from MazeMap's CDN: offline, it is simply missing. The lists still work.
+    console.warn("map failed to load", e);
+    toast("The map couldn't load. Check your connection; the lists still work.", 6000);
+  }
 
   const registry = await import("./data/toilets-dtu-lyngby.json");
   // Display positions are nudged apart where rooms overlap; distances still use the true ones.
@@ -139,3 +147,11 @@ async function boot() {
 }
 
 boot();
+
+// Installable app + offline app shell (see public/sw.js). Production only: in dev a service worker
+// would serve stale files and get in the way of hot reload.
+if ("serviceWorker" in navigator && import.meta.env.PROD) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch((e) => console.warn("service worker not registered", e));
+  });
+}

@@ -1,9 +1,11 @@
 // User actions: each one talks to Firestore (api.js) and then patches the local state
 // optimistically, so the UI updates without re-reading the aggregate documents.
 import { checkIn, checkOut, fetchMyReview, fetchProfile, saveProfile, saveReview } from "./api.js";
-import { CAMPUS } from "./config.js";
+import { readCache, writeCache } from "./cache.js";
+import { CAMPUS, PROFILE_MAX_AGE_MS } from "./config.js";
 import { currentUid, db, ensureUser } from "./firebase.js";
 import { setCheckIn, state, update } from "./store.js";
+import { invalidateLive, invalidateStats } from "./sync.js";
 
 const MIN_VISIT_MS = 25_000; // rules reject visits under 20 s; keep a margin for clock skew
 
@@ -26,15 +28,37 @@ export async function loadMyReview(id) {
 
 const EMPTY_PROFILE = () => ({ name: null, emoji: null, rv: {}, vs: {} });
 
+const profileKey = (uid) => `profile.${uid}`;
+
+/** Keep the profile in the state and a copy on the phone (so the next app open needs no read). */
+function setProfile(profile) {
+  update({ profile });
+  if (state.uid) writeCache(profileKey(state.uid), profile);
+}
+
 let profileLoading = null;
-/** The user's private profile: one read, then cached for the session. Not signed in: an empty one. */
-export async function loadProfile() {
-  if (state.profile) return state.profile;
+/**
+ * The user's private profile. Reused from the phone's copy when it is younger than
+ * PROFILE_MAX_AGE_MS, otherwise one read. `fresh` skips the copy (used before a rename, which
+ * must know every review). Not signed in: an empty profile.
+ */
+export async function loadProfile({ fresh = false } = {}) {
+  if (state.profile && !fresh) return state.profile;
   const uid = state.uid ?? (await currentUid());
   if (!uid) return EMPTY_PROFILE();
+  if (!fresh) {
+    const hit = readCache(profileKey(uid), PROFILE_MAX_AGE_MS);
+    if (hit) {
+      update({ profile: hit.value });
+      return hit.value;
+    }
+  }
   profileLoading ??= fetchProfile(db, uid)
     .then((profile) => {
-      if (!state.uid || state.uid === uid) update({ profile }); // ignore if the user changed meanwhile
+      if (!state.uid || state.uid === uid) {
+        update({ profile }); // ignore if the user changed meanwhile
+        writeCache(profileKey(uid), profile);
+      }
       return profile;
     })
     .finally(() => (profileLoading = null));
@@ -45,15 +69,16 @@ export async function loadProfile() {
 export async function updateProfile({ name, emoji }) {
   const uid = await ensureUser();
   update({ uid });
-  const profile = await loadProfile();
+  const profile = await loadProfile({ fresh: true }); // another device may have added reviews
   await saveProfile(db, CAMPUS.id, uid, { name, emoji }, Object.keys(profile.rv));
-  update({ profile: { ...profile, name, emoji } });
+  setProfile({ ...profile, name, emoji });
 }
 
 export async function startVisit(id) {
   const uid = await ensureUser();
   update({ uid });
   await checkIn(db, CAMPUS.id, uid, id);
+  invalidateLive();
   const now = Date.now();
   update({ live: { ...state.live, [id]: { u: uid, s: now, d: 10 } } });
   setCheckIn({ id, at: now });
@@ -73,9 +98,11 @@ export async function endVisit(id, { cancel = false } = {}) {
   const stats = { ...state.stats };
   if (countVisit) stats[id] = { ...(stats[id] ?? { n: 0, p: 0, c: 0, k: 0, v: 0 }), v: (stats[id]?.v ?? 0) + 1 };
   update({ live, stats });
+  invalidateLive(); // the phone's copies no longer match the server: read fresh next time
+  if (countVisit) invalidateStats();
   if (countVisit && state.profile) {
     const vs = { ...state.profile.vs, [id]: (state.profile.vs[id] ?? 0) + 1 };
-    update({ profile: { ...state.profile, vs } });
+    setProfile({ ...state.profile, vs });
   }
   setCheckIn(null);
   return countVisit;
@@ -104,6 +131,7 @@ export async function submitReview(id, scores) {
     },
   });
   const vs = scores.countVisit ? { ...profile.vs, [id]: (profile.vs[id] ?? 0) + 1 } : profile.vs;
-  update({ profile: { ...profile, rv: { ...profile.rv, [id]: { p: scores.p, c: scores.c, k: scores.k, at: Date.now() } }, vs } });
+  setProfile({ ...profile, rv: { ...profile.rv, [id]: { p: scores.p, c: scores.c, k: scores.k, at: Date.now() } }, vs });
+  invalidateStats(); // so the next app open reads the new totals instead of a copy from before our review
   state.myReviews.set(id, { uid, p: scores.p, c: scores.c, k: scores.k, text: (scores.text ?? "").trim(), createdMs: previous?.createdMs ?? Date.now() });
 }

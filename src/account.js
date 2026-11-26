@@ -12,6 +12,7 @@ import {
 } from "firebase/auth";
 import { auth } from "./firebase.js";
 import { loadProfile } from "./actions.js";
+import { clearCache } from "./cache.js";
 import { setCheckIn, state, update } from "./store.js";
 
 const provider = new GoogleAuthProvider();
@@ -37,6 +38,7 @@ export function initAccount() {
       // Signed out or switched to another user: nothing cached for the previous one applies.
       state.myReviews.clear();
       if (state.checkIn) setCheckIn(null);
+      clearCache(`profile.${state.uid}`); // don't leave their profile on a shared phone
       state.profile = null;
     }
     update({ uid, account: toAccount(user) });

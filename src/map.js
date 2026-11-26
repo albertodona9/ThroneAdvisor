@@ -173,6 +173,7 @@ export function floor() {
 }
 
 export function setFloor(z) {
+  if (!map) return; // the map library didn't load (offline)
   if (map.zLevel !== z) map.setZLevel(z);
 }
 
@@ -181,6 +182,7 @@ export function setFloor(z) {
  * to the map centre in pixels, the toilet should land (so it isn't hidden by the sheet).
  */
 export function focusToilet(t, { offset = [0, 0] } = {}) {
+  if (!map) return;
   setFloor(t.z);
   map.flyTo({
     center: [t.mlng, t.mlat],
@@ -199,6 +201,7 @@ export function showUser(position) {
 }
 
 export function flyToUser(position) {
+  if (!map) return;
   map.flyTo({ center: [position.lng, position.lat], zoom: Math.max(map.getZoom(), 18), duration: 900 });
 }
 

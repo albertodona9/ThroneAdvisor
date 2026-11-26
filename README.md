@@ -3,8 +3,9 @@
 _TODO_
 
 [ ] Add possibility to install webapp
-[ ] Add info page with credits and kings/queens page with users stats
-[ ] Make app a bit "less polished" with poops ratings based on the overalls (stinky, medium, excellent etc.)
+[ ] Add info page with credits for developers
+[ ] Make kings/queens tab with users stats
+[ ] Make app a bit "less nice" with poops ratings based on the overalls (stinky, medium, excellent etc.)
 [ ] trophies for reviewers, add monthly leaderboards and yearly throne kings and queens
 [ ] login options and cache storing on the phone so no need to login each time
 [ ] Personal Heat Map of campus
@@ -48,13 +49,13 @@ npm run toilets:fetch  # re-download the toilet list from MazeMap
 
 Firestore bills per document read, so the whole design is about reading few documents.
 
-| What                                          | Where                                          | Cost                                                                     |
-| --------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------ |
-| Toilet locations, names, floors (876 toilets) | Static JSON bundled with the app (`src/data/`) | **0 reads**                                                              |
-| Every toilet's score sums + visit counter     | One document: `campuses/{campus}/meta/stats`   | 1 read per refresh                                                       |
-| Who is in which toilet right now              | One document: `campuses/{campus}/meta/live`    | 1 read per refresh                                                       |
-| Reviews                                       | `campuses/{campus}/toilets/{id}/reviews/{uid}` | ≤ 10 reads, only when someone opens that toilet (cached for the session) |
-| A user's profile: name, avatar, own reviews and visits | `users/{uid}` (private to its owner)  | 1 read per session, only for users who have an account/session           |
+| What                                                   | Where                                          | Cost                                                                     |
+| ------------------------------------------------------ | ---------------------------------------------- | ------------------------------------------------------------------------ |
+| Toilet locations, names, floors (876 toilets)          | Static JSON bundled with the app (`src/data/`) | **0 reads**                                                              |
+| Every toilet's score sums + visit counter              | One document: `campuses/{campus}/meta/stats`   | 1 read per refresh                                                       |
+| Who is in which toilet right now                       | One document: `campuses/{campus}/meta/live`    | 1 read per refresh                                                       |
+| Reviews                                                | `campuses/{campus}/toilets/{id}/reviews/{uid}` | ≤ 10 reads, only when someone opens that toilet (cached for the session) |
+| A user's profile: name, avatar, own reviews and visits | `users/{uid}` (private to its owner)           | 1 read per session, only for users who have an account/session           |
 
 Opening the app costs **2 reads** (**3** for a returning user, whose profile is loaded too), regardless of how many toilets exist. While the tab is visible it
 re-reads `live` every 2 min and `stats` every 5 min (see `src/config.js`; `live` is polled slowly because few people check in
@@ -69,6 +70,26 @@ documents (`by`, `em`), so other people's names on a toilet's reviews cost no ex
 letters/digits/spaces/`_.-`, 16 allowed avatars). Renaming rewrites the user's own reviews in one batch; the rules allow that
 without touching scores or stats. Reviews written before profiles existed aren't in `rv`, so they don't appear in "Me" until the
 review is edited.
+
+**A copy on the phone saves reads.** The last `stats`, `live` and profile documents are kept in `localStorage` (`src/cache.js`).
+Opening the app while the copy is younger than its limit reuses it and reads **nothing**: scores 5 min, live status 90 s, profile
+6 h (`STATS_MAX_AGE_MS` etc. in `src/config.js`; higher means fewer reads but older numbers). The periodic polls while the tab is open
+still fetch. A user's own writes drop the affected copy so they never see their change missing, and a rename re-reads the profile
+first. Offline (or if a read fails) the last copy is shown however old it is, with the "offline" chip. This works in any browser tab;
+installing the app just makes the phone keep it longer, because Safari erases storage of ordinary sites after about a week without a
+visit. The saving depends on how often people reopen the app within those windows, so treat it as "up to 2-3 reads per open".
+
+## Installing the app (PWA)
+
+The app is installable: `public/manifest.webmanifest`, the icons, and a small service worker (`public/sw.js`, registered in
+production only). The service worker serves the app itself (HTML, JS, CSS, icons) from the phone, which opens it instantly and offline
+and spares hosting bandwidth; it never touches Firestore, Auth, App Check or MazeMap, and it leaves Firebase Hosting's `/__/` URLs
+(Google sign-in) alone. An "Install app" chip appears next to the logo where the browser allows it (Android / desktop Chrome and
+Edge); on iPhone it opens the "Share -> Add to Home Screen" steps. The chip can be dismissed and returns after two weeks.
+The MazeMap map itself still needs a connection. The app icons (`public/android-chrome-*.png`, `apple-touch-icon.png`, `favicon*`) come
+from the project's artwork; the **maskable** icon (`public/maskable-512x512.png`, which launchers crop to a circle or squircle) is
+generated from it: it measures the artwork, scales it into the 80% safe zone on a white background and writes the file
+(`npm i --no-save playwright-core && node scripts/make-maskable.mjs`). Re-run it if the 512px icon changes.
 
 Scores are stored as **sums** (`n` reviews, `p`/`c`/`k` sums, `v` visits), so they can be updated with
 atomic increments and validated by the security rules. Review lists are capped at 25 documents per query by the rules.
@@ -145,9 +166,11 @@ src/
   store.js     tiny reactive state; sync.js: polling; scoring.js: score maths
   layout.js    nudges overlapping toilet bubbles apart (display only)
   account.js, account-ui.js, profile.js   Google linking, account window + personalization, profile maths
+  cache.js, install.js   phone copy of documents (saves reads); "Install app" chip
   list.js (Near you / Top rated / Me), detail.js, dom.js, style.css
   data/        generated toilet registry (npm run toilets:fetch)
-scripts/       fetch-toilets.mjs (MazeMap -> JSON), seed-emulator.mjs
+scripts/       fetch-toilets.mjs (MazeMap -> JSON), seed-emulator.mjs, make-maskable.mjs
+public/         manifest, icons, service worker (copied as-is into the build)
 tests/         security-rules tests, layout and profile unit tests
 firestore.rules  firebase.json  firestore.indexes.json
 _legacy/       the previous prototype, safe to delete
