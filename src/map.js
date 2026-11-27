@@ -91,7 +91,7 @@ function addLayers(z) {
       "circle-radius": ringRadius,
       "circle-color": "#ffffff",
       "circle-opacity": 0,
-      "circle-stroke-color": "#1d4ed8",
+      "circle-stroke-color": "#c9971c",
       "circle-stroke-width": 3,
     },
   });

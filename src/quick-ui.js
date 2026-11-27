@@ -1,4 +1,4 @@
-// The 💩 button (bottom right): a quick "I just throned" log. Pick the throne you used, confirm,
+// The 🚽 button (bottom right): a quick "I just throned" log. Pick the throne you used, confirm,
 // and it adds one visit to that toilet's counter and to your profile. At most 3 a day per user;
 // the limit lives in the user's profile and is enforced by firestore.rules, and the phone shows
 // how many are left.
@@ -23,7 +23,7 @@ export function createQuickUI({ onRate }) {
   let busy = false;
 
   const badge = h("span", { class: "fab-badge" });
-  const fab = h("button", { class: "fab throne", type: "button", "aria-label": "I just throned", onclick: open }, "💩", badge);
+  const fab = h("button", { class: "fab throne", type: "button", "aria-label": "I just throned", onclick: open }, "🚽", badge);
   const card = h("div", { class: "modal-card", role: "dialog", "aria-modal": "true", "aria-label": "I just throned" });
   const overlay = h("div", { class: "modal", hidden: true, onclick: (e) => e.target === overlay && close() }, card);
   document.body.append(overlay);
@@ -60,7 +60,7 @@ export function createQuickUI({ onRate }) {
   }
 
   const closeBtn = () => h("button", { class: "icon-btn", type: "button", "aria-label": "Close", onclick: close }, "✕");
-  const leftText = (left) => (left > 0 ? `${left} of ${QUICK_PER_DAY} left today` : `All ${QUICK_PER_DAY} used today`);
+  const leftText = (left) => (left > 0 ? `${left} of ${QUICK_PER_DAY} audiences left today` : `All ${QUICK_PER_DAY} audiences held today`);
   const rowFor = ({ t, meters }) => {
     const score = overallScore(state.stats[t.id]);
     return h(
@@ -77,12 +77,12 @@ export function createQuickUI({ onRate }) {
     if (step === "done") {
       replaceChildren(
         card,
-        h("div", { class: "modal-head" }, h("h2", null, "Logged 💩"), closeBtn()),
+        h("div", { class: "modal-head" }, h("h2", null, "Audience recorded 🚽"), closeBtn()),
         h("p", { class: "note" }, h("strong", null, `+1 at ${toiletTitle(chosen)}`), ` · ${leftText(left)}`),
         h(
           "div",
           { class: "btn-row" },
-          h("button", { class: "btn primary", type: "button", onclick: () => { close(); onRate(chosen); } }, "Rate it too"),
+          h("button", { class: "btn primary", type: "button", onclick: () => { close(); onRate(chosen); } }, "Pass your verdict"),
           h("button", { class: "btn ghost", type: "button", onclick: close }, "Done"),
         ),
       );
@@ -92,13 +92,13 @@ export function createQuickUI({ onRate }) {
     if (step === "confirm") {
       replaceChildren(
         card,
-        h("div", { class: "modal-head" }, h("h2", null, "Log this visit?"), closeBtn()),
+        h("div", { class: "modal-head" }, h("h2", null, "Record this audience?"), closeBtn()),
         h("div", { class: "confirm-throne" }, h("strong", null, toiletTitle(chosen)), h("span", { class: "muted" }, toiletPlace(chosen))),
-        h("p", { class: "fineprint" }, `${leftText(left)}. This counts as one use of this throne.`),
+        h("p", { class: "fineprint" }, `${leftText(left)}. This counts as one sitting on this throne.`),
         h(
           "div",
           { class: "btn-row" },
-          h("button", { class: "btn primary", type: "button", disabled: busy, onclick: confirm }, "Yes, I just throned 💩"),
+          h("button", { class: "btn primary", type: "button", disabled: busy, onclick: confirm }, "Yes, I just throned 🚽"),
           h("button", { class: "btn ghost", type: "button", disabled: busy, onclick: () => { step = "pick"; render(); } }, "Back"),
         ),
       );
@@ -109,9 +109,9 @@ export function createQuickUI({ onRate }) {
     if (left <= 0) {
       replaceChildren(
         card,
-        h("div", { class: "modal-head" }, h("h2", null, "I just throned 💩"), closeBtn()),
-        h("p", { class: "note" }, `You've used all ${QUICK_PER_DAY} quick logs for today. The throne will be waiting tomorrow 👑`),
-        h("p", { class: "fineprint" }, "You can still rate any toilet from the map, as often as you like."),
+        h("div", { class: "modal-head" }, h("h2", null, "I just throned 🚽"), closeBtn()),
+        h("p", { class: "note" }, `You've held all ${QUICK_PER_DAY} audiences for today. The throne will be waiting tomorrow 👑`),
+        h("p", { class: "fineprint" }, "You can still pass a verdict on any throne from the map, as often as you like."),
         h("button", { class: "btn ghost", type: "button", onclick: close }, "Close"),
       );
       return;
@@ -120,7 +120,7 @@ export function createQuickUI({ onRate }) {
     const list = h("div", { class: "pick-list" });
     const fill = () => {
       const rows = candidates();
-      replaceChildren(list, rows.length ? rows.map(rowFor) : h("p", { class: "empty" }, "No toilet matches that. Try a building number or room."));
+      replaceChildren(list, rows.length ? rows.map(rowFor) : h("p", { class: "empty" }, "No throne matches that. Try a building number or room."));
     };
     const search = h("input", {
       type: "search",
@@ -133,7 +133,7 @@ export function createQuickUI({ onRate }) {
     search.value = query;
     replaceChildren(
       card,
-      h("div", { class: "modal-head" }, h("h2", null, "I just throned 💩"), closeBtn()),
+      h("div", { class: "modal-head" }, h("h2", null, "I just throned 🚽"), closeBtn()),
       h("p", { class: "fineprint left" }, `${leftText(left)} · ${query.trim() ? "search results" : "closest to you"}`),
       search,
       list,
@@ -150,7 +150,7 @@ export function createQuickUI({ onRate }) {
       step = "done";
     } catch (e) {
       step = "pick";
-      if (e instanceof QuickLimitError) toast("You've used today's 3 quick logs. Back tomorrow 👑", 4500);
+      if (e instanceof QuickLimitError) toast("You've held today's 3 audiences. Back tomorrow 👑", 4500);
       else {
         console.warn(e);
         toast(errorMessage(e));

@@ -58,10 +58,10 @@ function row({ t, meters }, onPick) {
         { class: "row-sub" },
         toiletPlace(t),
         meters != null ? ` · ${formatDistance(meters)}` : "",
-        e?.n ? ` · ${e.n} review${e.n === 1 ? "" : "s"}` : " · not rated yet",
+        e?.n ? ` · ${e.n} review${e.n === 1 ? "" : "s"}` : " · awaiting a verdict",
       ),
     ),
-    occ ? h("span", { class: "dot busy", title: "In use" }) : null,
+    occ ? h("span", { class: "dot busy", title: "Occupied" }) : null,
   );
 }
 
@@ -73,9 +73,9 @@ function stat(value, label) {
 function meView(onPick, onEditProfile) {
   const profile = state.profile;
   if (!state.uid) {
-    return h("p", { class: "empty" }, "Rate a toilet and your profile starts here: your reviews, your visits and your favourite thrones 👑");
+    return h("p", { class: "empty" }, "Rate a throne and your court begins here: your verdicts, your audiences and your favourite thrones 👑");
   }
-  if (!profile) return h("p", { class: "empty" }, "Loading your profile…");
+  if (!profile) return h("p", { class: "empty" }, "Summoning your court…");
 
   const stats = profileStats(profile);
   const reviews = myReviewList(profile).filter((r) => state.byId.has(r.id));
@@ -85,19 +85,19 @@ function meView(onPick, onEditProfile) {
       { class: "me-head" },
       h("span", { class: "avatar big initial" }, profile.emoji ?? "🚽"),
       h("div", { class: "me-name" }, h("strong", null, displayName(state.uid, profile.name)), h("span", { class: "muted" }, `${titleIcon(profile.title)} ${titleLabel(profile.title)}${state.account?.createdMs ? ` · born ${formatBorn(state.account.createdMs)}` : ""}`)),
-      h("button", { class: "btn secondary small", type: "button", onclick: onEditProfile }, "✏️ Edit"),
+      h("button", { class: "btn secondary small", type: "button", onclick: onEditProfile }, "Edit"),
     ),
     h(
       "div",
       { class: "stats" },
-      stat(stats.reviews, "reviews"),
-      stat(stats.visits, "visits"),
-      stat(stats.toilets, "toilets"),
-      stat(stats.avgGiven == null ? "–" : stats.avgGiven.toFixed(1), "avg score"),
+      stat(stats.reviews, "verdicts"),
+      stat(stats.visits, "audiences"),
+      stat(stats.toilets, "thrones"),
+      stat(stats.avgGiven == null ? "–" : stats.avgGiven.toFixed(1), "avg verdict"),
     ),
     reviews.length
       ? [
-          h("h3", { class: "list-title" }, "Your reviews"),
+          h("h3", { class: "list-title rule" }, "Your verdicts"),
           reviews.map((r) => {
             const t = state.byId.get(r.id);
             const visits = Number(profile.vs?.[r.id] ?? 0);
@@ -114,13 +114,13 @@ function meView(onPick, onEditProfile) {
                   { class: "row-sub" },
                   toiletPlace(t),
                   r.at ? ` · ${timeAgo(r.at)}` : "",
-                  visits ? ` · ${visits} visit${visits === 1 ? "" : "s"}` : "",
+                  visits ? ` · ${visits} audience${visits === 1 ? "" : "s"}` : "",
                 ),
               ),
             );
           }),
         ]
-      : h("p", { class: "empty" }, "You haven't reviewed a toilet yet. Pick one on the map and rate it 🧻"),
+      : h("p", { class: "empty" }, "You haven't passed a verdict yet. Choose a throne on the map and rate it 🧻"),
   ];
 }
 
@@ -166,20 +166,20 @@ function youLine(entry, period) {
     { class: "you-line" },
     entry
       ? `You ${period}: ${entry.n} ${entry.n === 1 ? s1 : sN} · ${entry.x ?? 0} ${(entry.x ?? 0) === 1 ? t1 : tN}`
-      : `You haven't thronged ${period} yet. The 💩 button is right there.`,
+      : `You haven't held court ${period} yet. The 🚽 button is right there.`,
   );
 }
 
 /** The Royals tab: this week's two podiums, then the all-time ones. */
 function royalsView() {
   const b = state.boards;
-  if (!b) return h("p", { class: "empty" }, royalsError ? "Couldn't reach the court. Check your connection." : "Summoning the court…");
+  if (!b) return h("p", { class: "empty" }, royalsError ? "The court is out of reach. Check your connection." : "Summoning the court…");
   const mine = state.myRoyal;
   return [
     h(
       "section",
       { class: "period" },
-      h("h3", { class: "period-title" }, "This week", h("small", null, `${weekLabel(b.week)} · starts over every Monday · a tie goes to the oldest royal`)),
+      h("h3", { class: "period-title" }, "Court of the Week", h("small", null, `${weekLabel(b.week)} · starts over every Monday · a tie goes to the oldest royal`)),
       boardCard(BOARDS.sessions, b.weekSessions),
       boardCard(BOARDS.explorers, b.weekExplorers),
       youLine(currentWeekEntry(mine), "this week"),
@@ -187,7 +187,7 @@ function royalsView() {
     h(
       "section",
       { class: "period" },
-      h("h3", { class: "period-title" }, "All time", h("small", null, "a tie goes to the youngest royal, so the crown keeps changing hands")),
+      h("h3", { class: "period-title" }, "Hall of Legends", h("small", null, "a tie goes to the youngest royal, so the crown keeps changing hands")),
       boardCard(BOARDS.sessions, b.allSessions),
       boardCard(BOARDS.explorers, b.allExplorers),
       youLine(mine?.all, "ever"),
@@ -203,10 +203,10 @@ export function createList({ onPick, onEditProfile, onExpand }) {
     const tabs = h(
       "div",
       { class: "tabs", role: "tablist" },
-      tabButton("nearby", hasPosition ? "Near you" : "Near campus centre"),
-      tabButton("top", "Top rated"),
+      tabButton("nearby", hasPosition ? "Nearby" : "Near the keep"),
+      tabButton("top", "Finest"),
       tabButton("royals", "👑 Royals"),
-      tabButton("me", "Me"),
+      tabButton("me", "My court"),
     );
     if (tab === "me") {
       replaceChildren(el, tabs, meView(onPick, onEditProfile));
@@ -222,7 +222,7 @@ export function createList({ onPick, onEditProfile, onExpand }) {
       tabs,
       rows.length
         ? rows.map((r) => row(r, onPick))
-        : h("p", { class: "empty" }, "No ratings yet. Be the first to review a throne 👑"),
+        : h("p", { class: "empty" }, "The court has yet to pass judgement. Be the first to review a throne 👑"),
     );
   }
 

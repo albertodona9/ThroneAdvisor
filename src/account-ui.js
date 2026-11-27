@@ -62,7 +62,7 @@ export function createAccountUI() {
   const save = () =>
     run(async () => {
       const result = await saveWithGoogle({ confirmSwitch });
-      if (result === "linked") toast("Account saved. Your reviews are now safe 🎉");
+      if (result === "linked") toast("Account saved. Your legacy is secure 🎉");
       else if (result === "switched" || result === "signed-in") toast("Signed in. Welcome back 👑");
       if (result !== "cancelled") close();
     });
@@ -77,7 +77,7 @@ export function createAccountUI() {
   const signOutNow = () =>
     run(async () => {
       await logOut();
-      toast("Signed out");
+      toast("You have left the court");
       close();
     });
 
@@ -94,13 +94,13 @@ export function createAccountUI() {
     const personalize = h(
       "button",
       { class: "btn secondary", type: "button", disabled: busy, onclick: () => ((view = "personalize"), (draft = null), render()) },
-      "✏️ Personalize profile",
+      "✏️ Personalize your court profile",
     );
 
     if (a && !a.anonymous) {
       replaceChildren(
         card,
-        h("div", { class: "modal-head" }, h("h2", null, "Your account"), closeButton()),
+        h("div", { class: "modal-head" }, h("h2", null, "Your royal account"), closeButton()),
         h(
           "div",
           { class: "profile" },
@@ -110,10 +110,10 @@ export function createAccountUI() {
         h(
           "p",
           { class: "note" },
-          `Your reviews appear as “${shownName()}”. Your Google name and email are never shown to anyone else, and your reviews stay with you on any phone you sign in on.`,
+          `Your verdicts are signed “${shownName()}”. Your Google name and email are never shown to anyone else, and your reign follows you to any phone you sign in on.`,
         ),
         personalize,
-        h("button", { class: "btn ghost", type: "button", disabled: busy, onclick: signOutNow }, "Sign out"),
+        h("button", { class: "btn ghost", type: "button", disabled: busy, onclick: signOutNow }, "Leave the court"),
       );
       return;
     }
@@ -121,14 +121,14 @@ export function createAccountUI() {
     const anonymous = !!a;
     replaceChildren(
       card,
-      h("div", { class: "modal-head" }, h("h2", null, anonymous ? "Save your account" : "Sign in"), closeButton()),
+      h("div", { class: "modal-head" }, h("h2", null, anonymous ? "Secure your crown" : "Enter the court"), closeButton()),
       anonymous
         ? h(
             "p",
             { class: "note" },
-            `You're using ThroneAdvisor without an account, as “${shownName()}”. Your reviews are tied to this browser: clear its data or switch phones and you'd lose them. Save them to a Google account and they follow you everywhere.`,
+            `You're reigning incognito as “${shownName()}”. Your verdicts are bound to this browser: clear its data or switch phones and your reign would be lost. Save it to a Google account and it follows you everywhere.`,
           )
-        : h("p", { class: "note" }, "Sign in to keep your reviews across devices. You can also just rate toilets without an account."),
+        : h("p", { class: "note" }, "Sign in to keep your reign across devices. You can also rate thrones without an account."),
       anonymous ? royalLine() : null,
       googleButton(anonymous ? "Save my account with Google" : "Continue with Google", save, busy),
       anonymous
@@ -222,7 +222,7 @@ export function createAccountUI() {
       const bad = nameProblem(draft.name);
       problem.textContent = bad ?? "";
       const shown = draft.name.trim() || generated;
-      replaceChildren(preview, "Your reviews will show as ", h("strong", null, `${draft.emoji ? draft.emoji + " " : ""}${shown}`), ` · ${titleLabel(draft.title)} on the leaderboard`);
+      replaceChildren(preview, "Your verdicts will be signed ", h("strong", null, `${draft.emoji ? draft.emoji + " " : ""}${shown}`), ` · ${titleLabel(draft.title)} on the leaderboard`);
       const changed = (draft.name.trim() || null) !== (current.name ?? null) || (draft.emoji ?? null) !== (current.emoji ?? null) || (draft.title ?? null) !== (current.title ?? null);
       saveBtn.disabled = busy || !!bad || !changed;
     }
@@ -231,7 +231,7 @@ export function createAccountUI() {
       run(
         async () => {
           await updateProfile({ name: draft.name.trim() || null, emoji: draft.emoji, title: draft.title });
-          toast("Profile saved ✓");
+          toast("Decree sealed ✓");
           view = "main";
           draft = null;
         },
@@ -245,13 +245,13 @@ export function createAccountUI() {
         "div",
         { class: "modal-head" },
         h("button", { class: "icon-btn", type: "button", "aria-label": "Back", onclick: () => ((view = "main"), (draft = null), render()) }, "←"),
-        h("h2", null, "Personalize profile"),
+        h("h2", null, "Your court profile"),
         closeButton(),
       ),
       h("label", { class: "field" }, h("span", null, "Username"), input, problem),
-      h("button", { class: "linklike", type: "button", onclick: () => ((draft.name = ""), (input.value = ""), refresh()) }, "Use my random name"),
+      h("button", { class: "linklike", type: "button", onclick: () => ((draft.name = ""), (input.value = ""), refresh()) }, "Use my royal name"),
       h("div", { class: "field" }, h("span", null, "Title"), titleRow, h("span", { class: "hint" }, "Shown on the Royals leaderboard. Tap again to go back to plain “Royal”.")),
-      h("div", { class: "field" }, h("span", null, "Avatar"), grid),
+      h("div", { class: "field" }, h("span", null, "Crest"), grid),
       preview,
       saveBtn,
     );

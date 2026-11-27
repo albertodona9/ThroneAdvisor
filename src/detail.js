@@ -65,16 +65,16 @@ export function createDetail({ onClose, onSaveAccount }) {
         h(
           "div",
           { class: "score-meta" },
-          h("strong", { class: "tier-name" }, tier ? tier.name : "Not rated yet"),
+          h("strong", { class: "tier-name" }, tier ? tier.name : "Awaiting judgement"),
           tier ? h("span", { class: "tier-level", style: `color:${tier.color}` }, tier.tagline) : null,
           h(
             "span",
             null,
             tier
               ? [h("b", { class: "score-pill", style: `background:${tier.color}` }, formatScore(score)), ` from ${e.n} review${e.n === 1 ? "" : "s"}`]
-              : "No reviews yet",
+              : "No verdicts yet",
           ),
-          h("span", null, `Used ${e?.v ?? 0} time${e?.v === 1 ? "" : "s"}`),
+          h("span", null, `Sat upon ${e?.v ?? 0} time${e?.v === 1 ? "" : "s"}`),
         ),
       ),
       h(
@@ -102,10 +102,10 @@ export function createDetail({ onClose, onSaveAccount }) {
     // Checking in is optional (people mostly just review afterwards), so the neutral state
     // is "nobody has checked in", not "free".
     const status = mine
-      ? h("p", { class: "status mine" }, "🚽 You're in here. It frees up by itself after 10 min.")
+      ? h("p", { class: "status mine" }, "👑 You hold the throne. It's released by itself after 10 min.")
       : occ
-        ? h("p", { class: "status busy" }, `🔴 In use · free in about ${occ.minutesLeft} min`)
-        : h("p", { class: "status idle" }, "Nobody has checked in here");
+        ? h("p", { class: "status busy" }, `🔴 Occupied · vacant in about ${occ.minutesLeft} min`)
+        : h("p", { class: "status idle" }, "No royal has checked in here");
 
     const enterButton = (cls) =>
       h(
@@ -114,15 +114,15 @@ export function createDetail({ onClose, onSaveAccount }) {
           class: `btn ${cls}`,
           type: "button",
           disabled: busy || !!occ,
-          title: "Optional: lets others see that this toilet is taken",
+          title: "Optional: lets other royals see that this throne is taken",
           onclick: enter,
         },
-        elsewhere ? "Move here, I'm going in" : "I'm going in",
+        elsewhere ? "Move to this throne" : "Take the throne",
       );
 
     const buttons = mine
       ? [
-          h("button", { class: "btn primary", type: "button", disabled: busy, onclick: finish }, "I'm done ✓"),
+          h("button", { class: "btn primary", type: "button", disabled: busy, onclick: finish }, "Rise ✓"),
           h("button", { class: "btn ghost", type: "button", disabled: busy, onclick: cancel }, "Cancel"),
           reviewButton("secondary"),
         ]
@@ -137,7 +137,7 @@ export function createDetail({ onClose, onSaveAccount }) {
     return h(
       "button",
       { class: `btn ${cls}`, type: "button", onclick: () => openForm() },
-      mineReview ? "Edit your review" : "Rate this toilet",
+      mineReview ? "Amend your verdict" : "Pass your verdict",
     );
   }
 
@@ -164,8 +164,8 @@ export function createDetail({ onClose, onSaveAccount }) {
       h(
         "div",
         { class: "save-prompt" },
-        h("strong", null, "💾 Keep your reviews safe"),
-        h("p", null, "They're tied to this browser right now. Save your account with Google and they follow you to any phone."),
+        h("strong", null, "💾 Safeguard your legacy"),
+        h("p", null, "Your verdicts are bound to this browser for now. Save your account with Google and your reign follows you to any phone."),
         h(
           "div",
           { class: "btn-row" },
@@ -215,7 +215,7 @@ export function createDetail({ onClose, onSaveAccount }) {
   const finish = () =>
     guarded(async () => {
       const counted = await endVisit(toilet.id);
-      toast(counted ? "Visit logged. Hope it went well! 🎉" : "That was quick! Visits under 25 s don't count.");
+      toast(counted ? "Audience recorded. Long may you reign! 👑" : "A brief audience! Visits under 25 s don't count.");
       openForm({ visitCounted: counted });
     });
 
@@ -277,7 +277,7 @@ export function createDetail({ onClose, onSaveAccount }) {
     const text = h("textarea", {
       rows: 3,
       maxlength: MAX_TEXT_LENGTH,
-      placeholder: "Anything the next person should know? (optional)",
+      placeholder: "Anything the next royal should know? (optional)",
       oninput: (ev) => (counter.textContent = `${ev.target.value.length}/${MAX_TEXT_LENGTH}`),
     });
     text.value = previous?.text ?? "";
@@ -286,9 +286,9 @@ export function createDetail({ onClose, onSaveAccount }) {
     const visit = h("input", { type: "checkbox", checked: !previous });
     const visitRow = visitCounted || previous
       ? null
-      : h("label", { class: "check" }, visit, h("span", null, "I used this toilet (adds to its usage count)"));
+      : h("label", { class: "check" }, visit, h("span", null, "I sat on this throne (adds to its count)"));
 
-    const submit = h("button", { class: "btn primary", type: "submit" }, previous ? "Update review" : "Post review");
+    const submit = h("button", { class: "btn primary", type: "submit" }, previous ? "Update verdict" : "Deliver verdict");
     const form = h(
       "form",
       {
@@ -299,7 +299,7 @@ export function createDetail({ onClose, onSaveAccount }) {
           const id = toilet.id;
           try {
             await submitReview(id, { ...values, text: text.value, countVisit: !visitCounted && !previous && visit.checked });
-            toast("Thanks! Your review is in 🧻");
+            toast("Your verdict is in the royal archives 🧻");
             upsertCachedReview(id);
             closeForm();
             renderReviews();
@@ -312,9 +312,9 @@ export function createDetail({ onClose, onSaveAccount }) {
           }
         },
       },
-      h("h3", null, previous ? "Edit your review" : "How was it?"),
+      h("h3", null, previous ? "Amend your verdict" : "Your verdict"),
       sliders,
-      h("div", { class: "overall" }, "Overall ", overall, " / 10"),
+      h("div", { class: "overall" }, "Royal rating ", overall, " / 10"),
       h("div", { class: "text-wrap" }, text, counter),
       visitRow,
       h(
@@ -351,17 +351,17 @@ export function createDetail({ onClose, onSaveAccount }) {
   function renderReviews(error = false) {
     const cache = reviewCache.get(toilet.id);
     if (error) {
-      replaceChildren(reviewsBox, h("p", { class: "muted" }, "Couldn't load reviews."), loadButton("Retry"));
+      replaceChildren(reviewsBox, h("p", { class: "muted" }, "The archives are out of reach."), loadButton("Retry"));
       return;
     }
     if (!cache) {
-      replaceChildren(reviewsBox, h("p", { class: "muted" }, "Loading reviews…"));
+      replaceChildren(reviewsBox, h("p", { class: "muted" }, "Consulting the archives…"));
       return;
     }
     replaceChildren(
       reviewsBox,
-      h("h3", null, "Reviews"),
-      cache.list.length ? cache.list.map(reviewCard) : h("p", { class: "muted" }, "Nobody has reviewed this throne yet."),
+      h("h3", { class: "rule" }, "Verdicts of the court"),
+      cache.list.length ? cache.list.map(reviewCard) : h("p", { class: "muted" }, "The court has yet to pass judgement on this throne."),
       cache.done ? null : loadButton("Show more"),
     );
   }

@@ -27,7 +27,7 @@ Find a free toilet on campus and rate how nice it is to sit in. Built for DTU Ly
   phone. Reviews show the username (a generated nickname unless they chose one), never the Google name or email.
 - **Profiles.** The top-right button opens the account window, where "Personalize profile" sets a username and an avatar. The **Me** tab in
   the bottom sheet shows your numbers (reviews, visits, toilets, average score) and every review you wrote.
-- **"I just throned" 💩.** The round button at the bottom right logs a quick visit: pick the toilet you used (closest first, or search),
+- **"I just throned" 🚽.** The round button at the bottom right logs a quick visit: pick the toilet you used (closest first, or search),
   confirm, and it adds one to that toilet's usage counter and to your profile. At most **3 a day** per user; the badge shows how many are left.
 - **Credits.** Tapping the ThroneAdvisor logo opens a pop-up with who made it and a link to this repository.
 - **Rating tiers.** A toilet's overall score decides its tier, which has a name and a picture shown in every list and in the detail view:
@@ -262,7 +262,7 @@ src/
   layout.js    nudges overlapping toilet bubbles apart (display only)
   account.js, account-ui.js, profile.js   Google linking, account window + personalization, profile maths
   cache.js, install.js   phone copy of documents (saves reads); "Install app" chip
-  credits.js, quick-ui.js   the credits pop-up; the 💩 "I just throned" button and picker
+  credits.js, quick-ui.js   the credits pop-up; the 🚽 "I just throned" button and picker
   tiers.js, tiers-ui.js   the five rating tiers (ranges, names, colours, pictures) and the badge shown in rows
   sheet-swipe.js   swipe gestures for the bottom sheet
   royals.js   loads the four Royals boards and keeps your own entries (cached on the phone)

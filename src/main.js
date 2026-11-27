@@ -62,7 +62,7 @@ document.getElementById("app").append(
   sheet,
 );
 
-// The 💩 button sits just above the bottom sheet, whatever height the sheet has right now.
+// The 🚽 button sits just above the bottom sheet, whatever height the sheet has right now.
 const placeAboveSheet = () => document.documentElement.style.setProperty("--sheet-h", `${sheet.offsetHeight}px`);
 new ResizeObserver(placeAboveSheet).observe(sheet);
 placeAboveSheet();
