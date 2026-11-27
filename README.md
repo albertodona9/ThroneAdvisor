@@ -1,16 +1,19 @@
 # 🚽 ThroneAdvisor
 
+_Link: https://throneadvisor-0.web.app/_
+
 _TODO_
 
 [X] Add possibility to install webapp
 [X] Add info page with credits for developers
-[ ] Make kings/queens tab with users stats
-[ ] Make app a bit "less nice" with poops ratings based on the overalls (stinky, medium, excellent etc.)
-[X] trophies for reviewers, add monthly leaderboards and yearly throne kings and queens
+[X] Make kings/queens tab with users stats
+[ ] Make app a bit "less nice" with poops ratings based on the overalls (stinky, medium, excellent etc.), add colors and decorations
+[X] trophies for reviewers, add weekly leaderboards and yearly throne kings and queens
 [ ] Add the thropies room for each user with all time streak number and with badges for the weekly all time
 I am thinking of something like every season gets its own badge (based on crops or something like that) and the frame is either gold, silver or bronze based on the position.
 [X] login options and cache storing on the phone so no need to login each time
 [ ] Personal Heat Map of campus
+[ ] Ironic message like "congrats on your throning" when registering a throne session, with some confetti and trumpets sounds and drapes
 
 Find a free toilet on campus and rate how nice it is to sit in. Built for DTU Lyngby on top of
 [MazeMap](https://www.mazemap.com), hosted on Firebase.
