@@ -17,6 +17,31 @@ export function nameProblem(name) {
   return null;
 }
 
+export const BIO_MAX = 80;
+const STUDENT_NUMBER_RE = /^[A-Za-z0-9]{4,12}$/;
+
+/** Returns null when the short description is fine (or empty), else a short reason. Mirrors `validBio` in firestore.rules. */
+export function bioProblem(text) {
+  const t = (text ?? "").trim();
+  if (!t) return null;
+  if ([...t].length > BIO_MAX) return `Use at most ${BIO_MAX} characters.`;
+  if (/[\r\n]/.test(t)) return "Keep it to one line.";
+  return null;
+}
+
+/** Returns null when the student number is fine (or empty), else a short reason. Mirrors `validStudentNumber` in firestore.rules. */
+export function studentNumberProblem(sn) {
+  const t = (sn ?? "").trim();
+  if (!t) return null;
+  return STUDENT_NUMBER_RE.test(t) ? null : "4 to 12 letters or digits, no spaces (like s123456).";
+}
+
+/** Graduation years offered in the profile: a few behind us (alumni) to several ahead. Mirrors `validClassYear` in firestore.rules (2000-2099). */
+export const classYearOptions = (now = new Date()) => Array.from({ length: 14 }, (_, i) => now.getFullYear() - 5 + i);
+
+/** "27" for 2027: what the "Class of" badge shows. */
+export const classYearShort = (cy) => String(cy % 100).padStart(2, "0");
+
 /** What to show for a user: their chosen name, else the generated nickname. */
 export function displayName(uid, chosen) {
   return chosen || nickname(uid);
@@ -98,21 +123,24 @@ export const likeKey = (toiletId, authorUid) => `${toiletId}_${authorUid}`;
 
 /**
  * What the public leaderboard shows about a user: their name (chosen, else the generated nickname), avatar,
- * title and birth date.
+ * title, birth date and short description. The student number is only public when the user opted in (`snPub`).
  */
 export function royalIdentity({ uid, profile, bornMs }) {
   return {
     name: displayName(uid, profile?.name),
     emoji: profile?.emoji ?? null,
     title: profile?.title ?? null,
+    bio: profile?.bio || null,
+    cy: profile?.cy || null,
+    sn: profile?.snPub && profile?.sn ? profile.sn : null,
     bornMs,
   };
 }
 
 /** The two kinds of board, in the app's voice. `field` is what the board is ranked by on a royal's record. */
 export const BOARDS = {
-  sessions: { field: "n", title: "The Royal Flush", icon: "🧻", caption: "most throning sessions", unit: ["session", "sessions"] },
-  explorers: { field: "x", title: "Throne Hoppers", icon: "🗺️", caption: "most different thrones tried", unit: ["throne", "thrones"] },
+  sessions: { field: "n", title: "The Royal Flush", caption: "most throning sessions", unit: ["session", "sessions"] },
+  explorers: { field: "x", title: "Throne Hoppers", caption: "most different thrones tried", unit: ["throne", "thrones"] },
 };
 
 /** "24 Nov – 30 Nov": the Monday and the Sunday of leaderboard week `week`. */

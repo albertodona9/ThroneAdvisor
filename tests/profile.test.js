@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { BOARDS, EMOJIS, QUICK_PER_DAY, dayNumber, displayName, formatBorn, likeKey, medal, myReviewList, nameProblem, profileStats, quickUsage, royalIdentity, titleIcon, titleLabel, weekLabel, weekNumber, weekStartMs } from "../src/profile.js";
+import { avatarFrame, commentVictoryFrame } from "../src/avatars.js";
+import { BIO_MAX, BOARDS, EMOJIS, QUICK_PER_DAY, bioProblem, classYearOptions, classYearShort, dayNumber, displayName, formatBorn, likeKey, medal, myReviewList, nameProblem, profileStats, quickUsage, royalIdentity, studentNumberProblem, titleIcon, titleLabel, weekLabel, weekNumber, weekStartMs } from "../src/profile.js";
 
 describe("weekly leaderboard weeks", () => {
   // Monday 2026-11-23 00:00 in Denmark (winter, UTC+1) is Sunday 23:00 UTC.
@@ -9,6 +10,18 @@ describe("weekly leaderboard weeks", () => {
     expect(weekNumber(monday)).toBe(weekNumber(monday - 1) + 1);
     expect(weekNumber(monday + 7 * 86_400_000 - 1)).toBe(weekNumber(monday)); // up to the next Monday
     expect(weekNumber(monday + 7 * 86_400_000)).toBe(weekNumber(monday) + 1);
+  });
+
+  describe("comment victory frames", () => {
+    it("uses progressively richer frames at 10, 25 and 50 likes", () => {
+      expect(commentVictoryFrame(9)).toBeNull();
+      expect(commentVictoryFrame(10)?.id).toBe("feathered");
+      expect(commentVictoryFrame(24)?.id).toBe("feathered");
+      expect(commentVictoryFrame(25)?.id).toBe("gilded");
+      expect(commentVictoryFrame(49)?.id).toBe("gilded");
+      expect(commentVictoryFrame(50)?.id).toBe("royal");
+      expect(commentVictoryFrame(100)?.id).toBe("royal");
+    });
   });
 
   it("keeps Monday to Sunday in one week", () => {
@@ -62,6 +75,16 @@ describe("nameProblem", () => {
 });
 
 describe("avatars", () => {
+  it("uses podium frames instead of the saved choice, without changing the profile", () => {
+    const profile = { frame: "jade" };
+    expect([1, 2, 3].map((rank) => avatarFrame(profile.frame, rank))).toEqual(["gold", "silver", "bronze"]);
+    expect(profile.frame).toBe("jade");
+    expect(avatarFrame(profile.frame)).toBe("jade");
+    expect(avatarFrame(profile.frame, 4)).toBe("jade");
+    expect(avatarFrame(null)).toBeNull();
+    expect(avatarFrame("gold")).toBeNull();
+  });
+
   it("offers 16 distinct emojis", () => {
     expect(new Set(EMOJIS).size).toBe(16);
   });
@@ -116,10 +139,36 @@ describe("kings and queens", () => {
 
   it("describes a user for the leaderboard: chosen name, else a generated nickname, plus avatar, title and birth", () => {
     const born = Date.UTC(2026, 10, 1);
-    expect(royalIdentity({ uid: "u1", profile: { name: "Queen Alice", emoji: "🦊", title: "queen" }, bornMs: born })).toEqual({ name: "Queen Alice", emoji: "🦊", title: "queen", bornMs: born });
+    expect(royalIdentity({ uid: "u1", profile: { name: "Queen Alice", emoji: "🦊", title: "queen" }, bornMs: born })).toEqual({ name: "Queen Alice", emoji: "🦊", title: "queen", bio: null, cy: null, sn: null, bornMs: born });
     const anon = royalIdentity({ uid: "u1", profile: null, bornMs: born });
     expect(anon.name).toBe(displayName("u1", null));
     expect(anon).toMatchObject({ emoji: null, title: null, bornMs: born });
+  });
+
+  it("publishes the short description, and the student number only when its owner opted in", () => {
+    const profile = { name: "Queen Alice", bio: "Loves the 2nd floor", sn: "s123456" };
+    expect(royalIdentity({ uid: "u1", profile, bornMs: 1 })).toMatchObject({ bio: "Loves the 2nd floor", sn: null });
+    expect(royalIdentity({ uid: "u1", profile: { ...profile, snPub: true }, bornMs: 1 })).toMatchObject({ sn: "s123456" });
+  });
+
+  it("offers graduation years around the current one and shows them as two digits", () => {
+    const years = classYearOptions(new Date(2026, 5, 1));
+    expect(years).toContain(2026);
+    expect(years[0]).toBe(2021);
+    expect(years.at(-1)).toBe(2034);
+    expect(classYearShort(2027)).toBe("27");
+    expect(classYearShort(2005)).toBe("05");
+    expect(royalIdentity({ uid: "u1", profile: { name: "Queen Alice", cy: 2027 }, bornMs: 1 }).cy).toBe(2027);
+  });
+
+  it("checks the short description (one line, at most 80 characters) and the student number (4-12 letters or digits)", () => {
+    expect(bioProblem("")).toBeNull();
+    expect(bioProblem("A".repeat(BIO_MAX))).toBeNull();
+    expect(bioProblem("A".repeat(BIO_MAX + 1))).toMatch(/at most 80/);
+    expect(bioProblem("two\nlines")).toMatch(/one line/i);
+    expect(studentNumberProblem("")).toBeNull();
+    expect(studentNumberProblem(" s123456 ")).toBeNull();
+    for (const bad of ["s12", "s 123456", "s-123456", "s".repeat(13)]) expect(studentNumberProblem(bad)).not.toBeNull();
   });
 
   it("generated nicknames are always acceptable public names (letters and spaces, at most 30)", () => {

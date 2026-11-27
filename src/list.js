@@ -2,12 +2,17 @@
 // Computed locally from the toilet registry, the stats document and your profile, so
 // browsing it costs no extra reads.
 import { loadProfile } from "./actions.js";
+import { avatarBadge } from "./avatars.js";
+import flushArt from "./assets/board-flush.svg";
+import hoppersArt from "./assets/board-hoppers.svg";
 import { currentWeekEntry, loadBoards, myRoyalState } from "./royals.js";
+import { classBadge, openRoyalProfile } from "./royal-profile.js";
 import { CAMPUS } from "./config.js";
 import { h, replaceChildren } from "./dom.js";
 import { distanceMeters, formatDistance, inBounds, timeAgo } from "./geo.js";
 import { toiletPlace, toiletTitle } from "./labels.js";
-import { BOARDS, displayName, formatBorn, medal, myReviewList, profileStats, titleIcon, titleLabel, weekLabel } from "./profile.js";
+import { trophyRoom } from "./trophy-shelf.js";
+import { BOARDS, displayName, formatBorn, myReviewList, profileStats, titleIcon, titleLabel } from "./profile.js";
 import { overallScore, rankScore } from "./scoring.js";
 import { tierBadge, tierTag } from "./tiers-ui.js";
 import { occupancy, state } from "./store.js";
@@ -70,7 +75,7 @@ function stat(value, label) {
 }
 
 /** Profile header, numbers and the user's own reviews. */
-function meView(onPick, onEditProfile) {
+function meView(onPick) {
   const profile = state.profile;
   if (!state.uid) {
     return h("p", { class: "empty" }, "Rate a throne and your court begins here: your verdicts, your audiences and your favourite thrones 👑");
@@ -83,10 +88,21 @@ function meView(onPick, onEditProfile) {
     h(
       "div",
       { class: "me-head" },
-      h("span", { class: "avatar big initial" }, profile.emoji ?? "🚽"),
-      h("div", { class: "me-name" }, h("strong", null, displayName(state.uid, profile.name)), h("span", { class: "muted" }, `${titleIcon(profile.title)} ${titleLabel(profile.title)}${state.account?.createdMs ? ` · born ${formatBorn(state.account.createdMs)}` : ""}`)),
-      h("button", { class: "btn secondary small", type: "button", onclick: onEditProfile }, "Edit"),
+      avatarBadge(profile, { size: "big" }),
+      h(
+        "div",
+        { class: "me-name" },
+        h(
+          "strong",
+          null,
+          displayName(state.uid, profile.name),
+          profile.sn ? h("span", { class: "sn", title: profile.snPub ? "Public" : "Only you see this" }, ` · ${profile.sn}`) : null,
+        ),
+        h("span", { class: "muted" }, `${titleIcon(profile.title)} ${titleLabel(profile.title)}${state.account?.createdMs ? ` · born ${formatBorn(state.account.createdMs)}` : ""}`),
+      ),
+      classBadge(profile.cy),
     ),
+    profile.bio ? h("p", { class: "bio" }, profile.bio) : null,
     h(
       "div",
       { class: "stats" },
@@ -95,6 +111,8 @@ function meView(onPick, onEditProfile) {
       stat(stats.toilets, "thrones"),
       stat(stats.avgGiven == null ? "–" : stats.avgGiven.toFixed(1), "avg verdict"),
     ),
+    h("h3", { class: "list-title rule" }, "Your trophy room"),
+    trophyRoom(state.myRoyal?.all, { own: true }),
     reviews.length
       ? [
           h("h3", { class: "list-title rule" }, "Your verdicts"),
@@ -126,32 +144,39 @@ function meView(onPick, onEditProfile) {
 
 let royalsError = false;
 
-/** One podium place: medal, avatar, name + title, birth date, and the number the board is ranked by. */
-function royalRow(r, rank, mine, board) {
+const BOARD_ART = { sessions: flushArt, explorers: hoppersArt };
+
+/** One podium place: the framed avatar with its count on the corner, and the name underneath. Tap it for the profile. */
+function royalPlace(r, rank, mine, board) {
   const value = r[board.field];
   return h(
-    "div",
-    { class: `row royal ${mine ? "mine" : ""}` },
-    h("span", { class: "rank" }, medal(rank)),
-    h("span", { class: "royal-avatar" }, r.emoji ?? titleIcon(r.title)),
-    h(
-      "span",
-      { class: "row-main" },
-      h("span", { class: "row-title" }, r.name, mine ? " (you)" : "", h("span", { class: "tier-tag" }, ` · ${titleLabel(r.title)}`)),
-      h("span", { class: "row-sub" }, r.bornMs ? `Born ${formatBorn(r.bornMs)}` : ""),
-    ),
-    h("span", { class: "royal-n" }, h("strong", null, String(value)), h("small", null, value === 1 ? board.unit[0] : board.unit[1])),
+    "button",
+    {
+      class: `podium-place place-${rank}${mine ? " mine" : ""}`,
+      type: "button",
+      title: `${value} ${value === 1 ? board.unit[0] : board.unit[1]}`,
+      "aria-label": `${r.name}, ${value} ${value === 1 ? board.unit[0] : board.unit[1]}. Open profile`,
+      onclick: () => openRoyalProfile(r, rank),
+    },
+    h("span", { class: "podium-avatar" }, avatarBadge(r, { size: "podium", rank }), h("span", { class: "podium-n" }, String(value))),
+    h("span", { class: "podium-name" }, r.name, mine ? " (you)" : ""),
   );
 }
 
-/** One board: its name, what it ranks, and the top three (or an invitation when nobody has any yet). */
-function boardCard(board, list) {
+/** One board: its name and art, and the top three standing as a podium (silver, gold, bronze), or an invitation when nobody has any yet. */
+function boardCard(board, list, kind) {
+  const places = list.slice(0, 3).map((r, i) => royalPlace(r, i + 1, r.uid === state.uid, board));
   return h(
     "section",
     { class: "board" },
-    h("h4", { class: "board-title" }, `${board.icon} ${board.title}`, h("small", null, board.caption)),
-    list.length
-      ? list.map((r, i) => royalRow(r, i + 1, r.uid === state.uid, board))
+    h(
+      "h4",
+      { class: "board-title" },
+      h("img", { class: "board-art", src: BOARD_ART[kind], alt: "", width: 40, height: 40 }),
+      h("span", null, board.title, h("small", null, board.caption)),
+    ),
+    places.length
+      ? h("div", { class: "podium" }, [places[1], places[0], places[2]])
       : h("p", { class: "board-empty" }, "Nobody has claimed this crown yet 👑"),
   );
 }
@@ -170,6 +195,16 @@ function youLine(entry, period) {
   );
 }
 
+/** A festive announcement: the title set on a gentle arc, higher in the middle. */
+function periodTitle(text) {
+  const id = `arc-${text.replace(/\W+/g, "-").toLowerCase()}`;
+  const title = h("h3", { class: "period-title", "aria-label": text });
+  title.innerHTML =
+    `<svg viewBox="0 0 320 48" aria-hidden="true"><defs><path id="${id}" d="M12 42 Q160 14 308 42"/></defs>` +
+    `<text><textPath href="#${id}" startOffset="50%" text-anchor="middle">${text}</textPath></text></svg>`;
+  return title;
+}
+
 /** The Royals tab: this week's two podiums, then the all-time ones. */
 function royalsView() {
   const b = state.boards;
@@ -179,23 +214,23 @@ function royalsView() {
     h(
       "section",
       { class: "period" },
-      h("h3", { class: "period-title" }, "Court of the Week", h("small", null, `${weekLabel(b.week)} · starts over every Monday · a tie goes to the oldest royal`)),
-      boardCard(BOARDS.sessions, b.weekSessions),
-      boardCard(BOARDS.explorers, b.weekExplorers),
+      periodTitle("Court of the Week"),
+      boardCard(BOARDS.sessions, b.weekSessions, "sessions"),
+      boardCard(BOARDS.explorers, b.weekExplorers, "explorers"),
       youLine(currentWeekEntry(mine), "this week"),
     ),
     h(
       "section",
       { class: "period" },
-      h("h3", { class: "period-title" }, "Hall of Legends", h("small", null, "a tie goes to the youngest royal, so the crown keeps changing hands")),
-      boardCard(BOARDS.sessions, b.allSessions),
-      boardCard(BOARDS.explorers, b.allExplorers),
+      periodTitle("Hall of Legends"),
+      boardCard(BOARDS.sessions, b.allSessions, "sessions"),
+      boardCard(BOARDS.explorers, b.allExplorers, "explorers"),
       youLine(mine?.all, "ever"),
     ),
   ];
 }
 
-export function createList({ onPick, onEditProfile, onExpand }) {
+export function createList({ onPick, onExpand }) {
   const el = h("div", { class: "list" });
 
   function render() {
@@ -209,7 +244,7 @@ export function createList({ onPick, onEditProfile, onExpand }) {
       tabButton("me", "My court"),
     );
     if (tab === "me") {
-      replaceChildren(el, tabs, meView(onPick, onEditProfile));
+      replaceChildren(el, tabs, meView(onPick));
       return;
     }
     if (tab === "royals") {
@@ -245,6 +280,7 @@ export function createList({ onPick, onEditProfile, onExpand }) {
           if (id === "me") {
             onExpand(); // the profile needs room
             loadProfile().then(render, () => {}); // one read, cached
+            myRoyalState().then(render, () => {}); // the trophy shelves live on the royal record (2 reads, kept for the session)
           }
           render();
         },

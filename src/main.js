@@ -1,6 +1,8 @@
 import "./style.css";
 import { createAccountUI } from "./account-ui.js";
 import { initAccount } from "./account.js";
+import { createCourtAudio } from "./audio.js";
+import { createCelebration } from "./celebration.js";
 import { CAMPUS } from "./config.js";
 import { createCredits } from "./credits.js";
 import { createDetail } from "./detail.js";
@@ -13,20 +15,39 @@ import { enableSheetSwipe } from "./sheet-swipe.js";
 import { createQuickUI } from "./quick-ui.js";
 import { createMap, floor, flyToUser, focusToilet, renderToilets, setSelected, showUser } from "./map.js";
 import { startSync, refreshAll } from "./sync.js";
+import { checkTrophies } from "./trophy-check.js";
 import { state, subscribe, update } from "./store.js";
 
 // ---- layout -------------------------------------------------------------------------
 
 const account = createAccountUI();
 const credits = createCredits();
-const detail = createDetail({ onClose: deselect, onSaveAccount: account.open });
+const soundButton = h("button", { class: "sound-btn", type: "button", "data-audio-control": "", onclick: () => audio.toggle() });
+const audio = createCourtAudio({
+  onChange: ({ muted, activated }) => {
+    soundButton.textContent = muted ? "♪ Off" : "♪ On";
+    soundButton.setAttribute("aria-label", muted ? "Enable court audio" : "Mute court audio");
+    soundButton.setAttribute("aria-pressed", String(!muted));
+    soundButton.title = muted ? "Music and fanfares muted" : activated ? "Music and fanfares on" : "Music starts with your first tap";
+  },
+});
+const celebration = createCelebration({ audio });
+const detail = createDetail({
+  onClose: deselect,
+  onSaveAccount: account.open,
+  onCelebrate: celebration.show,
+  onThroningBlocked: celebration.tooSoon,
+});
 const list = createList({
   onPick: select,
-  onEditProfile: () => account.open("personalize"),
   onExpand: () => sheet.classList.add("expanded"),
 });
 
-const quick = createQuickUI({ onRate: (t) => select(t) });
+const quick = createQuickUI({
+  onRate: (t) => { select(t); detail.review({ visitCounted: true }); },
+  onCelebrate: celebration.show,
+  onThroningBlocked: celebration.tooSoon,
+});
 const offlineChip = h("span", { class: "chip offline", hidden: true }, "offline");
 const installChip = createInstallChip();
 const handle = h("button", {
@@ -57,6 +78,7 @@ document.getElementById("app").append(
     installChip,
   ),
   account.button,
+  soundButton,
   locate,
   quick.button,
   sheet,
@@ -165,6 +187,7 @@ async function boot() {
 
   await refreshAll(); // two document reads for the whole campus
   startSync();
+  checkTrophies(); // streaks, season medals and verdict trophies: once a day per phone, silent
   watchPosition();
   setInterval(() => update(), 30_000); // lets "in use" flags and countdowns expire on their own
 }

@@ -44,3 +44,7 @@ export const STATS_MAX_AGE_MS = 5 * 60_000; // scores and visit counters
 export const LIVE_MAX_AGE_MS = 90_000; // who is in which toilet
 export const PROFILE_MAX_AGE_MS = 6 * 3600_000; // the user's own profile (only they change it)
 export const ROYALS_MAX_AGE_MS = 20 * 60_000; // the four top-3 boards (12 document reads each time)
+
+// The first leaderboard week (weekNumber() of the week the Royals boards shipped, 23 Nov 2026): earlier weeks have
+// no weekly entries, so the season badges never look further back than this.
+export const ROYALS_FIRST_WEEK = 2968;

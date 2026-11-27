@@ -1,5 +1,6 @@
 // Detail view of one toilet: score, availability, check-in/out, review form, reviews.
 import { fetchReviews, MAX_TEXT_LENGTH } from "./api.js";
+import { avatarBadge, commentVictoryFrame } from "./avatars.js";
 import { endVisit, errorMessage, hasLiked, loadMyReview, startVisit, submitReview, toggleLike } from "./actions.js";
 import { CAMPUS } from "./config.js";
 import { h, replaceChildren, toast } from "./dom.js";
@@ -11,6 +12,7 @@ import { UNRATED_COLOR, tierFor } from "./tiers.js";
 import { db } from "./firebase.js";
 import { shouldPromptSave, snoozeSavePrompt } from "./account-ui.js";
 import { occupancy, state } from "./store.js";
+import { ThroningCooldownError } from "./throning-limit.js";
 
 const CATEGORIES = [
   { key: "p", name: "Privacy", icon: "🚪", hint: "Walls, lock, gaps, who can hear you" },
@@ -21,7 +23,7 @@ const CATEGORIES = [
 // Reviews already loaded this session, so reopening a toilet costs no reads.
 const reviewCache = new Map(); // id -> {list, cursor, done}
 
-export function createDetail({ onClose, onSaveAccount }) {
+export function createDetail({ onClose, onSaveAccount, onCelebrate, onThroningBlocked }) {
   const el = h("div", { class: "detail" });
   const head = h("div", { class: "detail-head" });
   const summary = h("div", { class: "summary" });
@@ -75,6 +77,9 @@ export function createDetail({ onClose, onSaveAccount }) {
               : "No verdicts yet",
           ),
           h("span", null, `Sat upon ${e?.v ?? 0} time${e?.v === 1 ? "" : "s"}`),
+          e?.l
+            ? h("span", { class: "last-claim" }, `Last claimed by ${displayName(e.l.u, e.l.n)} · ${timeAgo(e.l.at)}`)
+            : null,
         ),
       ),
       h(
@@ -147,7 +152,7 @@ export function createDetail({ onClose, onSaveAccount }) {
     if (!toilet) return;
     renderSummary();
     renderActions();
-    const key = `${state.uid}|${state.profile?.name}|${state.profile?.emoji}|${Object.keys(state.profile?.lk ?? {}).length}`;
+    const key = `${state.uid}|${state.profile?.name}|${state.profile?.emoji}|${state.profile?.frame}|${Object.keys(state.profile?.lk ?? {}).length}`;
     if (renderedKey !== key) {
       renderedKey = key;
       renderReviews();
@@ -197,7 +202,8 @@ export function createDetail({ onClose, onSaveAccount }) {
       await fn();
     } catch (e) {
       console.warn(e);
-      toast(errorMessage(e));
+      if (e instanceof ThroningCooldownError) onThroningBlocked(e.remainingMs);
+      else toast(errorMessage(e));
     } finally {
       busy = false;
       render();
@@ -214,9 +220,11 @@ export function createDetail({ onClose, onSaveAccount }) {
 
   const finish = () =>
     guarded(async () => {
+      const loggedToilet = toilet;
       const counted = await endVisit(toilet.id);
-      toast(counted ? "Audience recorded. Long may you reign! 👑" : "A brief audience! Visits under 25 s don't count.");
-      openForm({ visitCounted: counted });
+      if (counted) onCelebrate({ kind: "session", toilet: loggedToilet });
+      else toast("No new audience counted. Visits under 25 s or expired check-ins don't count.");
+      if (toilet?.id === loggedToilet.id) openForm({ visitCounted: counted });
     });
 
   // ---- review form ----------------------------------------------------------------------
@@ -297,19 +305,25 @@ export function createDetail({ onClose, onSaveAccount }) {
           ev.preventDefault();
           submit.disabled = true;
           const id = toilet.id;
+          const reviewedToilet = toilet;
+          const countVisit = !visitCounted && !previous && visit.checked;
           try {
-            await submitReview(id, { ...values, text: text.value, countVisit: !visitCounted && !previous && visit.checked });
-            toast("Your verdict is in the royal archives 🧻");
-            upsertCachedReview(id);
+            await submitReview(id, { ...values, text: text.value, countVisit });
+          } catch (e) {
+            console.warn(e);
+            if (e instanceof ThroningCooldownError) onThroningBlocked(e.remainingMs);
+            else toast(errorMessage(e));
+            submit.disabled = false;
+            return;
+          }
+          upsertCachedReview(id);
+          if (toilet?.id === id) {
             closeForm();
             renderReviews();
             render();
             showSavePrompt();
-          } catch (e) {
-            console.warn(e);
-            toast(errorMessage(e));
-            submit.disabled = false;
           }
+          onCelebrate({ kind: countVisit ? "session-review" : "review", toilet: reviewedToilet, amended: !!previous });
         },
       },
       h("h3", null, previous ? "Amend your verdict" : "Your verdict"),
@@ -389,19 +403,27 @@ export function createDetail({ onClose, onSaveAccount }) {
 
   function reviewCard(card) {
     const mineCard = card.uid === state.uid;
+    const victoryFrame = commentVictoryFrame(card.likes);
     // Your own reviews always show your current profile; other people's show what they chose when they posted.
     const r = {
       ...card,
       name: displayName(card.uid, mineCard && state.profile ? state.profile.name : card.by),
       emoji: mineCard && state.profile ? state.profile.emoji : card.em,
+      frame: mineCard && state.profile ? state.profile.frame : card.fr,
     };
     return h(
       "article",
-      { class: "review" },
+      {
+        class: `review${victoryFrame ? ` review-victory-${victoryFrame.id}` : ""}`,
+        "aria-label": victoryFrame ? `${victoryFrame.name}, ${card.likes} likes` : null,
+      },
+      victoryFrame
+        ? h("span", { class: "review-victory-label", "aria-hidden": "true" }, victoryFrame.name)
+        : null,
       h(
         "header",
         null,
-        h("strong", null, r.emoji ? `${r.emoji} ` : "", r.name, mineCard ? " (you)" : ""),
+        h("strong", { class: "review-author" }, avatarBadge(r, { size: "mini" }), h("span", null, r.name, mineCard ? " (you)" : "")),
         h("span", { class: "muted" }, timeAgo(r.createdMs)),
         h("span", { class: "chip", style: `background:${scoreColor(reviewScore(r))}` }, formatScore(reviewScore(r))),
       ),
@@ -483,5 +505,5 @@ export function createDetail({ onClose, onSaveAccount }) {
     toilet = null;
   }
 
-  return { el, open, close, render, get toiletId() { return toilet?.id ?? null; } };
+  return { el, open, close, render, review: openForm, get toiletId() { return toilet?.id ?? null; } };
 }

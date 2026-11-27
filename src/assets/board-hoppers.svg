@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="f" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a8683a"/>
+      <stop offset="1" stop-color="#6b3b1b"/>
+    </linearGradient>
+    <g id="foot">
+      <g fill="url(#f)" stroke="#4a2511" stroke-width="1.6" stroke-linejoin="round">
+        <path d="M0 -6c6-2 11 2 10 9-1 7-3 10-3 14 0 5-3 8-7 8s-7-3-7-8c0-4-1-7-2-10-1-6 3-11 9-13z"/>
+        <circle cx="-8.5" cy="-11" r="2.6"/>
+        <circle cx="-3" cy="-14.5" r="2.3"/>
+        <circle cx="2.6" cy="-15" r="2.2"/>
+        <circle cx="7.6" cy="-12.6" r="2"/>
+        <circle cx="11.6" cy="-8" r="1.8"/>
+      </g>
+      <g fill="none" stroke="#d9a06a" stroke-width="1.5" stroke-linecap="round" opacity=".85">
+        <path d="M-2 0c3-1 5 1 4 3s-4 2-4 0"/>
+        <path d="M-1 10c2-.5 3.5.5 3 2"/>
+      </g>
+    </g>
+  </defs>
+  <use href="#foot" transform="translate(21 36) rotate(-12) scale(1.15)"/>
+  <use href="#foot" transform="translate(46 24) rotate(10) scale(-1 1)"/>
+</svg>

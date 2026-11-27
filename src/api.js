@@ -20,6 +20,7 @@ import {
   startAfter,
   Timestamp,
   updateDoc,
+  where,
   writeBatch,
 } from "firebase/firestore";
 import { weekNumber } from "./profile.js";
@@ -45,7 +46,13 @@ export const BOARD_TOP = 3; // each of the four boards shows (and reads) this ma
 /** { [toiletId]: {n, p, c, k, v} } — one read for the whole campus. */
 export async function fetchStats(db, campus) {
   const snap = await getDoc(statsRef(db, campus));
-  return snap.exists() ? (snap.data().t ?? {}) : {};
+  const stats = snap.exists() ? (snap.data().t ?? {}) : {};
+  return Object.fromEntries(Object.entries(stats).map(([id, entry]) => [
+    id,
+    entry.l
+      ? { ...entry, l: { ...entry.l, at: entry.l.at?.toMillis?.() ?? entry.l.at } }
+      : entry,
+  ]));
 }
 
 /** { [toiletId]: {u, s, d} } — one read for the whole campus. `s` is converted to millis. */
@@ -69,7 +76,8 @@ function toReview(snap) {
     text: r.text ?? "",
     likes: r.lk ?? 0, // how many people liked it
     by: r.by ?? null, // chosen username (absent: show the generated nickname)
-    em: r.em ?? null, // chosen avatar emoji
+    em: r.em ?? null, // legacy identifier of the chosen portrait
+    fr: r.fr ?? null,
     createdAt: r.createdAt,
     createdMs: r.createdAt?.toMillis?.() ?? Date.now(),
   };
@@ -101,7 +109,7 @@ export async function fetchMyReview(db, campus, toiletId, uid) {
 export async function fetchProfile(db, uid) {
   const snap = await getDoc(userRef(db, uid));
   const d = snap.exists() ? snap.data() : {};
-  return { name: d.name ?? null, emoji: d.emoji ?? null, title: d.title ?? null, rv: d.rv ?? {}, vs: d.vs ?? {}, q: d.q ?? null, lk: d.lk ?? {} };
+  return { name: d.name ?? null, emoji: d.emoji ?? null, title: d.title ?? null, frame: d.frame ?? null, bio: d.bio ?? null, cy: d.cy ?? null, sn: d.sn ?? null, snPub: d.snPub ?? false, rv: d.rv ?? {}, vs: d.vs ?? {}, q: d.q ?? null, lk: d.lk ?? {} };
 }
 
 // ---- writes --------------------------------------------------------------
@@ -127,13 +135,14 @@ async function withBootstrap(db, campus, run) {
 const commitWithBootstrap = (db, campus, build) =>
   withBootstrap(db, campus, () => build().commit());
 
-function statsDelta(toiletId, { n = 0, p = 0, c = 0, k = 0, v = 0 }) {
+function statsDelta(toiletId, { n = 0, p = 0, c = 0, k = 0, v = 0, claim = null }) {
   return {
     [`t.${toiletId}.n`]: increment(n),
     [`t.${toiletId}.p`]: increment(p),
     [`t.${toiletId}.c`]: increment(c),
     [`t.${toiletId}.k`]: increment(k),
     [`t.${toiletId}.v`]: increment(v),
+    ...(claim ? { [`t.${toiletId}.l`]: { ...claim, at: serverTimestamp() } } : {}),
     ref: toiletId,
     at: serverTimestamp(),
   };
@@ -165,6 +174,9 @@ function addSession(batch, db, campus, uid, toiletId, royal) {
       ...identity,
       ...(royal.emoji ? { emoji: royal.emoji } : {}),
       ...(royal.title ? { title: royal.title } : {}),
+      ...(royal.bio ? { bio: royal.bio } : {}),
+      ...(royal.cy ? { cy: royal.cy } : {}),
+      ...(royal.sn ? { sn: royal.sn } : {}),
       ts: { [toiletId]: true },
       x: increment(royal.newAll === false ? 0 : 1),
     },
@@ -185,7 +197,7 @@ function addSession(batch, db, campus, uid, toiletId, royal) {
   );
 }
 
-export function saveReview(db, campus, uid, toiletId, { p, c, k, text, countVisit = false }, previous, profile = null, royal = null) {
+export function saveReview(db, campus, uid, toiletId, { p, c, k, text, countVisit = false }, previous, profile = null, royal = null, claim = null) {
   const trimmed = (text ?? "").trim();
   return commitWithBootstrap(db, campus, () => {
     const batch = writeBatch(db);
@@ -198,6 +210,7 @@ export function saveReview(db, campus, uid, toiletId, { p, c, k, text, countVisi
         text: trimmed ? trimmed : deleteField(),
         by: profile?.name ?? deleteField(),
         em: profile?.emoji ?? deleteField(),
+        fr: profile?.frame ?? deleteField(),
         updatedAt: serverTimestamp(),
       });
     } else {
@@ -208,6 +221,7 @@ export function saveReview(db, campus, uid, toiletId, { p, c, k, text, countVisi
         ...(trimmed ? { text: trimmed } : {}),
         ...(profile?.name ? { by: profile.name } : {}),
         ...(profile?.emoji ? { em: profile.emoji } : {}),
+        ...(profile?.frame != null ? { fr: profile.frame } : {}),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -220,6 +234,7 @@ export function saveReview(db, campus, uid, toiletId, { p, c, k, text, countVisi
         c: c - (previous?.c ?? 0),
         k: k - (previous?.k ?? 0),
         v: countVisit ? 1 : 0,
+        claim: countVisit ? (claim ?? { u: uid }) : null,
       }),
     );
     batch.set(
@@ -247,7 +262,7 @@ export function checkIn(db, campus, uid, toiletId, minutes = CHECK_IN_MINUTES) {
 }
 
 /** Leave the toilet. With `countVisit` the visit is added to the toilet's counter (and to `uid`'s profile). */
-export function checkOut(db, campus, toiletId, { countVisit, uid = null, royal = null }) {
+export function checkOut(db, campus, toiletId, { countVisit, uid = null, royal = null, claim = null }) {
   return commitWithBootstrap(db, campus, () => {
     const batch = writeBatch(db);
     batch.update(liveRef(db, campus), {
@@ -256,7 +271,7 @@ export function checkOut(db, campus, toiletId, { countVisit, uid = null, royal =
       at: serverTimestamp(),
     });
     if (countVisit) {
-      batch.update(statsRef(db, campus), statsDelta(toiletId, { v: 1 }));
+      batch.update(statsRef(db, campus), statsDelta(toiletId, { v: 1, claim: claim ?? (uid ? { u: uid } : null) }));
       if (uid) batch.set(userRef(db, uid), { vs: { [toiletId]: increment(1) } }, { merge: true });
       if (uid && royal) addSession(batch, db, campus, uid, toiletId, royal);
     }
@@ -269,10 +284,10 @@ export function checkOut(db, campus, toiletId, { countVisit, uid = null, royal =
  * 3 a day per user, tracked in `q` of the user's own profile, which is bumped in this same batch.
  * `used` is how many the client thinks were used on `day` (src/profile.js dayNumber).
  */
-export function quickThrone(db, campus, uid, toiletId, { used, day, royal = null }) {
+export function quickThrone(db, campus, uid, toiletId, { used, day, royal = null, claim = null }) {
   return commitWithBootstrap(db, campus, () => {
     const batch = writeBatch(db);
-    batch.update(statsRef(db, campus), statsDelta(toiletId, { v: 1 }));
+    batch.update(statsRef(db, campus), statsDelta(toiletId, { v: 1, claim: claim ?? { u: uid } }));
     batch.set(
       userRef(db, uid),
       { q: { d: day, n: used + 1 }, vs: { [toiletId]: increment(1) } },
@@ -288,7 +303,7 @@ export function quickThrone(db, campus, uid, toiletId, { used, day, royal = null
  * user's existing reviews, which is how other people see it. `reviewIds` are the toilets the
  * user has reviewed (the keys of their profile's `rv`).
  */
-export async function saveProfile(db, campus, uid, { name, emoji, title = null }, reviewIds, royal = null) {
+export async function saveProfile(db, campus, uid, { name, emoji, title = null, frame = null, bio = null, cy = null, sn = null, snPub = false }, reviewIds, royal = null) {
   const BATCH = 400; // Firestore allows 500 writes per batch
   const chunks = [];
   for (let i = 0; i < reviewIds.length; i += BATCH) chunks.push(reviewIds.slice(i, i + BATCH));
@@ -296,10 +311,23 @@ export async function saveProfile(db, campus, uid, { name, emoji, title = null }
   for (const [i, ids] of chunks.entries()) {
     const batch = writeBatch(db);
     if (i === 0) {
-      batch.set(userRef(db, uid), { name: name ?? deleteField(), emoji: emoji ?? deleteField(), title: title ?? deleteField() }, { merge: true });
+      batch.set(
+        userRef(db, uid),
+        {
+          name: name ?? deleteField(),
+          emoji: emoji ?? deleteField(),
+          title: title ?? deleteField(),
+          frame: frame ?? deleteField(),
+          bio: bio ?? deleteField(),
+          cy: cy ?? deleteField(),
+          sn: sn ?? deleteField(),
+          snPub: sn && snPub ? true : deleteField(),
+        },
+        { merge: true },
+      );
     }
     for (const id of ids) {
-      batch.update(reviewRef(db, campus, id, uid), { by: name ?? deleteField(), em: emoji ?? deleteField() });
+      batch.update(reviewRef(db, campus, id, uid), { by: name ?? deleteField(), em: emoji ?? deleteField(), fr: frame ?? deleteField() });
     }
     await batch.commit();
   }
@@ -310,6 +338,9 @@ export async function saveProfile(db, campus, uid, { name, emoji, title = null }
         name: royal.name,
         emoji: royal.emoji ?? deleteField(),
         title: royal.title ?? deleteField(),
+        bio: royal.bio ?? deleteField(),
+        cy: royal.cy ?? deleteField(),
+        sn: royal.sn ?? deleteField(),
       });
     } catch (e) {
       if (e?.code !== "not-found" && e?.code !== "permission-denied") throw e; // no royal record yet: nothing to update
@@ -343,6 +374,9 @@ export function likeReview(db, campus, toiletId, authorUid, likerUid, like) {
 //             birth date, see firestore.indexes.json) so that the top BOARD_TOP is exact however many tie.
 // Weeks are numbered by weekNumber() (src/profile.js).
 
+// What the royal record carries about trophies (see firestore.rules validTrophies): streaks, best liked review, seasons.
+const trophiesOf = (r) => ({ st: r.st ?? null, lt: r.lt ?? 0, wl: r.wl ?? 0, wq: r.wq ?? {} });
+
 const toRoyal = (snap, { withTs = false } = {}) => {
   const r = snap.data();
   return {
@@ -350,8 +384,12 @@ const toRoyal = (snap, { withTs = false } = {}) => {
     name: r.name,
     emoji: r.emoji ?? null,
     title: r.title ?? null,
+    bio: r.bio ?? null,
+    cy: r.cy ?? null,
+    sn: r.sn ?? null,
     n: r.n,
     x: r.x ?? 0,
+    ...trophiesOf(r),
     bornMs: r.born?.toMillis?.() ?? null,
     ...(withTs ? { ts: r.ts ?? {} } : {}),
   };
@@ -394,4 +432,58 @@ export async function fetchWeekRoyal(db, campus, uid, week = weekNumber()) {
 export async function fetchMyRoyalState(db, campus, uid, week = weekNumber()) {
   const [all, wk] = await Promise.all([fetchRoyal(db, campus, uid), fetchWeekRoyal(db, campus, uid, week)]);
   return { all, week: wk };
+}
+
+// ---- trophies -------------------------------------------------------------------------------
+// The shelf lives on the royal record (st / lt / wl / wq) and is moved by the owner's phone from public data:
+//   days/{yyyymmdd}  {d, s, e}   who stood on the all-time sessions (s) / explorers (e) podium that day
+//   podiums/{week}   {w, s, e}   who stood on the weekly sessions (s) / explorers (e) podium of a finished week
+// Both are created once by the first phone that needs them (it reads the boards: 6 reads) and are never changed.
+
+const dayRef = (db, campus, day) => doc(db, "campuses", campus, "days", String(day));
+const podiumRef = (db, campus, week) => doc(db, "campuses", campus, "podiums", String(week));
+
+/** Snapshots with `field` greater than `after`, oldest first (one read each). */
+async function snapshotsAfter(db, campus, collectionName, field, after, max) {
+  const snap = await getDocs(query(collection(db, "campuses", campus, collectionName), where(field, ">", after), orderBy(field), limit(max)));
+  return snap.docs.map((d) => ({ ...d.data(), [field]: Number(d.data()[field]) }));
+}
+
+/** Daily podium snapshots newer than day `after`: [{d, s: [uid], e: [uid]}]. */
+export const fetchDaysAfter = (db, campus, after, max = 62) => snapshotsAfter(db, campus, "days", "d", after, max);
+
+/** Weekly podium snapshots of weeks newer than `after`: [{w, s: [uid], e: [uid]}]. */
+export const fetchPodiumsAfter = (db, campus, after, max = 60) => snapshotsAfter(db, campus, "podiums", "w", after, max);
+
+/** Today's podium of the all-time boards (6 reads): { s: [uid], e: [uid] }. */
+export async function fetchAllTimePodium(db, campus) {
+  const allTime = collection(db, "campuses", campus, "royals");
+  const [s, e] = await Promise.all([topBoard(allTime, "n", "youngest"), topBoard(allTime, "x", "youngest")]);
+  return { s: s.map((r) => r.uid), e: e.map((r) => r.uid) };
+}
+
+/** The final weekly podium of week `week` (6 reads): { s: [uid], e: [uid] }. */
+export async function fetchWeekPodium(db, campus, week) {
+  const col = collection(db, "campuses", campus, "weeks", String(week), "royals");
+  const [s, e] = await Promise.all([topBoard(col, "n", "oldest"), topBoard(col, "x", "oldest")]);
+  return { s: s.map((r) => r.uid), e: e.map((r) => r.uid) };
+}
+
+/** Write a snapshot; false if someone else got there first (which the rules turn into a refused update). */
+async function createOnce(ref, data) {
+  try {
+    await setDoc(ref, data);
+    return true;
+  } catch (e) {
+    if (e?.code === "permission-denied") return false;
+    throw e;
+  }
+}
+export const createDaySnapshot = (db, campus, day, podium) => createOnce(dayRef(db, campus, day), { d: day, ...podium });
+export const createWeekPodium = (db, campus, week, podium) => createOnce(podiumRef(db, campus, week), { w: week, ...podium });
+
+/** Save changed trophy fields (st / lt / wl / wq) on the user's own royal record, which must exist (it starts with a counted session). */
+export async function saveTrophies(db, campus, uid, patch) {
+  await updateDoc(royalRef(db, campus, uid), patch);
+  return true;
 }

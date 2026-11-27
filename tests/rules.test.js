@@ -19,7 +19,7 @@ import {
   updateDoc,
   writeBatch,
 } from "firebase/firestore";
-import { checkIn, checkOut, fetchLive, fetchMyReview, fetchProfile, fetchReviews, fetchBoards, fetchMyRoyalState, fetchRoyal, fetchStats, fetchWeekRoyal, likeReview, quickThrone, saveProfile, saveReview } from "../src/api.js";
+import { checkIn, checkOut, createDaySnapshot, createWeekPodium, fetchAllTimePodium, fetchDaysAfter, fetchPodiumsAfter, fetchWeekPodium, saveTrophies, fetchLive, fetchMyReview, fetchProfile, fetchReviews, fetchBoards, fetchMyRoyalState, fetchRoyal, fetchStats, fetchWeekRoyal, likeReview, quickThrone, saveProfile, saveReview } from "../src/api.js";
 import { dayNumber, weekNumber } from "../src/profile.js";
 
 const CAMPUS = "test";
@@ -183,12 +183,28 @@ describe("reviews", () => {
   it("lets a review count as a visit, without any check-in", async () => {
     const db = as("alice");
     await assertSucceeds(saveReview(db, CAMPUS, "alice", T, { ...review, countVisit: true }, null));
-    expect((await fetchStats(db, CAMPUS))[T]).toEqual({ n: 1, p: 8, c: 6, k: 7, v: 1 });
+    expect((await fetchStats(db, CAMPUS))[T]).toMatchObject({ n: 1, p: 8, c: 6, k: 7, v: 1, l: { u: "alice" } });
     // editing the review later can't count another visit (it could be farmed): use the quick log for that
     const first = await fetchMyReview(db, CAMPUS, T, "alice");
     await assertFails(saveReview(db, CAMPUS, "alice", T, { ...review, countVisit: true }, first));
     await assertSucceeds(saveReview(db, CAMPUS, "alice", T, { ...review, p: 9, countVisit: false }, first)); // a plain edit is fine
     expect((await fetchStats(db, CAMPUS))[T].v).toBe(1);
+  });
+
+  it("does not allow a forged last-claim identity", async () => {
+    const db = as("alice");
+    await saveProfile(db, CAMPUS, "alice", { name: "Alice Royal" }, []);
+    await assertFails(saveReview(
+      db,
+      CAMPUS,
+      "alice",
+      T,
+      { ...review, countVisit: true },
+      null,
+      { name: "Alice Royal" },
+      null,
+      { u: "alice", n: "Forged Royal" },
+    ));
   });
 
   it("rejects a review that adds more than one visit", async () => {
@@ -317,6 +333,33 @@ describe("profiles", () => {
     await assertFails(setDoc(userDoc(db, "alice"), { emoji: "💩" }));
     await assertFails(setDoc(userDoc(db, "alice"), { emoji: "not an emoji" }));
     await assertFails(setDoc(userDoc(db, "alice"), { name: "Alice A", admin: true }));
+  });
+
+  it("saves and clears frames on the profile and existing reviews without changing scores", async () => {
+    const db = as("alice");
+    await saveReview(db, CAMPUS, "alice", T, review, null, { ...fox, frame: "jade" });
+    expect(await fetchMyReview(db, CAMPUS, T, "alice")).toMatchObject({ em: fox.emoji, fr: "jade" });
+    await assertSucceeds(saveReview(db, CAMPUS, "alice", T, review, await fetchMyReview(db, CAMPUS, T, "alice"), { ...fox, frame: "rose" }));
+    expect((await fetchMyReview(db, CAMPUS, T, "alice")).fr).toBe("rose");
+    const before = await fetchStats(db, CAMPUS);
+    for (const frame of ["pearl", "jade", "amethyst", "rose", null]) {
+      await assertSucceeds(saveProfile(db, CAMPUS, "alice", { ...fox, frame }, [T]));
+      expect((await fetchProfile(db, "alice")).frame).toBe(frame);
+      const mine = await fetchMyReview(db, CAMPUS, T, "alice");
+      expect(mine).toMatchObject({ fr: frame, p: review.p, c: review.c, k: review.k });
+      expect(await fetchStats(db, CAMPUS)).toEqual(before);
+    }
+  });
+
+  it("rejects unknown and podium-only frames on profiles and reviews", async () => {
+    const db = as("alice");
+    await saveReview(db, CAMPUS, "alice", T, review, null, fox);
+    for (const frame of ["gold", "silver", "bronze", "custom", "", 42]) {
+      await assertFails(setDoc(userDoc(db, "alice"), { ...fox, frame }));
+      await assertFails(updateDoc(reviewDoc(db, T, "alice"), { fr: frame }));
+      await assertFails(saveReview(db, CAMPUS, "alice", U, review, null, { ...fox, frame }));
+    }
+    expect((await fetchStats(db, CAMPUS))[U]).toBeUndefined();
   });
 
   it("records a review and its visit in the user's own history, in the same batch", async () => {
@@ -806,10 +849,176 @@ describe("royals: sessions and the toilets they tried (Throne Hoppers)", () => {
     expect(await fetchRoyal(anon(), CAMPUS, "bob")).toBeNull();
   });
 
+  it("shows the short description and an opted-in student number on the public record, and takes them off again", async () => {
+    const db = as("alice");
+    await quickRoyal(db, "alice", T, 0);
+    const next = { name: "Regal Fox", emoji: "🦊", title: "queen", bio: "Third floor regular", cy: 2027, sn: "s123456", snPub: true };
+    await assertSucceeds(saveProfile(db, CAMPUS, "alice", next, [], next));
+    expect(await fetchRoyal(anon(), CAMPUS, "alice")).toMatchObject({ bio: "Third floor regular", cy: 2027, sn: "s123456", n: 1 });
+    expect(await fetchProfile(db, "alice")).toMatchObject({ bio: "Third floor regular", sn: "s123456", snPub: true });
+    // keeping the number private: it stays in the private profile and leaves the public record
+    const priv = { ...next, snPub: false };
+    await assertSucceeds(saveProfile(db, CAMPUS, "alice", priv, [], { ...priv, sn: null }));
+    expect(await fetchRoyal(anon(), CAMPUS, "alice")).toMatchObject({ bio: "Third floor regular", sn: null });
+    expect(await fetchProfile(db, "alice")).toMatchObject({ sn: "s123456", snPub: false });
+    // a first session creates the record with them
+    await assertSucceeds(quickRoyal(as("bob"), "bob", T, 0, royal({ bio: "Hello", sn: "b654321" })));
+    expect(await fetchRoyal(anon(), CAMPUS, "bob")).toMatchObject({ bio: "Hello", sn: "b654321" });
+  });
+
+  it("refuses a long, multi-line or malformed description / student number, and anyone else editing them", async () => {
+    const db = as("alice");
+    await quickRoyal(db, "alice", T, 0);
+    for (const bad of [{ bio: "x".repeat(81) }, { bio: "two\nlines" }, { bio: "" }, { sn: "s1" }, { sn: "s 123456" }, { sn: "s".repeat(13) }, { cy: 1999 }, { cy: 2100 }, { cy: "27" }]) {
+      await assertFails(updateDoc(royalDoc(db, "alice"), bad));
+    }
+    await assertFails(updateDoc(royalDoc(as("bob"), "alice"), { bio: "Bob was here" }));
+    const merge = { merge: true }; // keep the quick-visit allowance (`q`) the first session created
+    await assertFails(setDoc(userDoc(db, "alice"), { bio: "x".repeat(81) }, merge));
+    await assertFails(setDoc(userDoc(db, "alice"), { sn: "not valid!" }, merge));
+    await assertFails(setDoc(userDoc(db, "alice"), { snPub: true }, merge)); // nothing to publish
+    await assertFails(setDoc(userDoc(db, "alice"), { cy: 27 }, merge));
+    await assertSucceeds(setDoc(userDoc(db, "alice"), { sn: "s123456", snPub: true, bio: "Fine", cy: 2027 }, merge));
+  });
+
   it("stores a king / queen title in the private profile, and only those", async () => {
     const db = as("alice");
     await assertSucceeds(setDoc(doc(db, "users", "alice"), { title: "queen" }));
     await assertSucceeds(setDoc(doc(db, "users", "alice"), { title: "king" }));
     await assertFails(setDoc(doc(db, "users", "alice"), { title: "emperor" }));
+  });
+});
+
+describe("trophies: the shelf on the royal record, and the daily / weekly podium snapshots", () => {
+  const royalDoc = (db, uid) => doc(db, "campuses", CAMPUS, "royals", uid);
+  const weekDoc = (db, uid, week = weekNumber()) => doc(db, "campuses", CAMPUS, "weeks", String(week), "royals", uid);
+  const born = (daysAgo) => Timestamp.fromMillis(Date.now() - daysAgo * 24 * 3600_000);
+  /** A royal record as the rules would have let a first session write it (fixture). */
+  const withRecord = (uid, extra = {}) => seed((db) => setDoc(royalDoc(db, uid), { name: `Royal ${uid}`, born: born(30), n: 1, x: 1, ts: { [T]: true }, ...extra }));
+
+  it("lets the owner keep streaks, seasons and the verdict trophy on their record, readable by everyone", async () => {
+    await withRecord("alice");
+    const shelf = { st: { s: 3, e: 1, d: dayNumber() }, lt: 50, wl: weekNumber() - 1, wq: { "2026Q4": { s1: 2, e3: 1 } } };
+    expect(await saveTrophies(as("alice"), CAMPUS, "alice", shelf)).toBe(true);
+    expect(await fetchRoyal(anon(), CAMPUS, "alice")).toMatchObject({ ...shelf, name: "Royal alice", n: 1, x: 1 }); // the counters stay as they were
+  });
+
+  it("reads a record without a shelf as an empty one", async () => {
+    await withRecord("alice");
+    expect(await fetchRoyal(anon(), CAMPUS, "alice")).toMatchObject({ st: null, lt: 0, wl: 0, wq: {} });
+  });
+
+  it("can't start a record with a shelf: a record only begins with a counted session", async () => {
+    await assertFails(saveTrophies(as("alice"), CAMPUS, "alice", { lt: 10 }));
+    await assertFails(setDoc(doc(as("alice"), "campuses", CAMPUS, "royals", "alice"), { name: "Regal Fox", born: born(30), n: 1, lt: 100 }));
+  });
+
+  it("only the owner can change the shelf, and it can't carry other changes with it", async () => {
+    await withRecord("alice");
+    await assertFails(updateDoc(royalDoc(as("bob"), "alice"), { lt: 100 }));
+    await assertFails(updateDoc(royalDoc(anon(), "alice"), { lt: 100 }));
+    await assertFails(updateDoc(royalDoc(as("alice"), "alice"), { lt: 100, n: 50 })); // sessions can't be set
+    await assertFails(updateDoc(royalDoc(as("alice"), "alice"), { lt: 100, x: 9, ts: { [T]: true, [U]: true } }));
+    await assertFails(updateDoc(royalDoc(as("alice"), "alice"), { lt: 100, born: born(900) }));
+  });
+
+  it("checks the shape of the shelf", async () => {
+    await withRecord("alice");
+    const db = as("alice");
+    const bad = [
+      { lt: 7 }, { lt: 101 }, { lt: "50" },
+      { st: { s: -1, e: 0, d: 20261127 } }, { st: { s: 1.5, e: 0, d: 20261127 } }, { st: { s: 1, e: 0 } },
+      { st: { s: 1, e: 0, d: 20261127, extra: 1 } }, { st: { s: 100001, e: 0, d: 20261127 } }, { st: [1, 2, 3] },
+      { wl: -1 }, { wl: "12" }, { wq: [1] }, { wq: "x" },
+      { wq: Object.fromEntries(Array.from({ length: 41 }, (_, i) => [`${2000 + i}Q1`, { s1: 1 }])) },
+      { trophies: 5 },
+    ];
+    for (const patch of bad) await assertFails(updateDoc(royalDoc(db, "alice"), patch));
+    await assertSucceeds(updateDoc(royalDoc(db, "alice"), { lt: 10 }));
+    await assertSucceeds(updateDoc(royalDoc(db, "alice"), { lt: 100 }));
+  });
+
+  it("keeps the shelf when a profile change rewrites the name on the record", async () => {
+    await withRecord("alice", { st: { s: 2, e: 0, d: 20261127 }, lt: 10 });
+    const next = { name: "Queen Alice", emoji: null, title: "queen" };
+    await assertSucceeds(saveProfile(as("alice"), CAMPUS, "alice", next, [], next));
+    expect(await fetchRoyal(anon(), CAMPUS, "alice")).toMatchObject({ name: "Queen Alice", st: { s: 2, e: 0, d: 20261127 }, lt: 10 });
+  });
+
+  describe("daily snapshot of the all-time podium", () => {
+    const podium = { s: ["alice", "bob"], e: ["bob"] };
+    const dayDoc = (db, d) => doc(db, "campuses", CAMPUS, "days", String(d));
+
+    it("is created once, by whoever gets there first, and then can't be changed", async () => {
+      expect(await createDaySnapshot(as("alice"), CAMPUS, dayNumber(), podium)).toBe(true);
+      expect(await createDaySnapshot(as("bob"), CAMPUS, dayNumber(), { s: ["bob"], e: [] })).toBe(false); // too late: it exists
+      expect(await fetchDaysAfter(anon(), CAMPUS, 0)).toEqual([{ d: dayNumber(), ...podium }]);
+      await assertFails(updateDoc(dayDoc(as("alice"), dayNumber()), { s: ["alice"] }));
+      await assertFails(deleteDoc(dayDoc(as("alice"), dayNumber())));
+    });
+
+    it("is only for today, with at most three names per board, and only for signed-in users", async () => {
+      expect(await createDaySnapshot(as("alice"), CAMPUS, dayNumber() - 1, podium)).toBe(false);
+      expect(await createDaySnapshot(as("alice"), CAMPUS, dayNumber() + 1, podium)).toBe(false);
+      expect(await createDaySnapshot(as("alice"), CAMPUS, dayNumber(), { s: ["a", "b", "c", "d"], e: [] })).toBe(false);
+      expect(await createDaySnapshot(anon(), CAMPUS, dayNumber(), podium)).toBe(false);
+      await assertFails(setDoc(dayDoc(as("alice"), 20200101), { d: dayNumber(), ...podium })); // the id must be the day
+      await assertFails(setDoc(dayDoc(as("alice"), dayNumber()), { d: dayNumber(), ...podium, extra: 1 }));
+      expect(await fetchDaysAfter(anon(), CAMPUS, 0)).toEqual([]);
+    });
+
+    it("is read after a given day, oldest first, and only in capped queries", async () => {
+      await seed(async (db) => {
+        for (const d of [20261125, 20261126, 20261127]) await setDoc(dayDoc(db, d), { d, s: [], e: [] });
+      });
+      expect((await fetchDaysAfter(anon(), CAMPUS, 20261125)).map((x) => x.d)).toEqual([20261126, 20261127]);
+      await assertFails(getDocs(query(collection(anon(), "campuses", CAMPUS, "days"), limit(63))));
+      await assertFails(getDocs(collection(anon(), "campuses", CAMPUS, "days")));
+    });
+
+    it("is made from the all-time boards: most sessions and most toilets tried, the youngest royal winning ties", async () => {
+      await withRecord("old", { n: 5, x: 2, born: born(100) });
+      await withRecord("young", { n: 5, x: 2, born: born(10) });
+      await withRecord("busy", { n: 9, x: 1 });
+      await withRecord("hopper", { n: 2, x: 7 });
+      await withRecord("never", { n: 1, x: 0 });
+      expect(await fetchAllTimePodium(anon(), CAMPUS)).toEqual({ s: ["busy", "young", "old"], e: ["hopper", "young", "old"] });
+    });
+  });
+
+  describe("podium snapshot of a finished week", () => {
+    const podium = { s: ["alice", "bob", "carol"], e: ["carol"] };
+    const last = weekNumber() - 1;
+    const podiumDoc = (db, w) => doc(db, "campuses", CAMPUS, "podiums", String(w));
+
+    it("is created once for a finished week, and can't be changed", async () => {
+      expect(await createWeekPodium(as("alice"), CAMPUS, last, podium)).toBe(true);
+      expect(await createWeekPodium(as("bob"), CAMPUS, last, { s: ["bob"], e: [] })).toBe(false);
+      expect(await fetchPodiumsAfter(anon(), CAMPUS, last - 1)).toEqual([{ w: last, ...podium }]);
+      await assertFails(updateDoc(podiumDoc(as("alice"), last), { s: [] }));
+      await assertFails(deleteDoc(podiumDoc(as("alice"), last)));
+    });
+
+    it("is refused for the running week, a future one, a mismatched id, too many names or no sign-in", async () => {
+      expect(await createWeekPodium(as("alice"), CAMPUS, weekNumber(), podium)).toBe(false);
+      expect(await createWeekPodium(as("alice"), CAMPUS, weekNumber() + 1, podium)).toBe(false);
+      expect(await createWeekPodium(as("alice"), CAMPUS, last, { s: ["a", "b", "c", "d"], e: [] })).toBe(false);
+      expect(await createWeekPodium(anon(), CAMPUS, last, podium)).toBe(false);
+      await assertFails(setDoc(podiumDoc(as("alice"), last - 1), { w: last, ...podium }));
+      expect(await fetchPodiumsAfter(anon(), CAMPUS, 0)).toEqual([]);
+    });
+
+    it("is made from that week's boards: the oldest royal wins a tie, and nobody with nothing counts", async () => {
+      const week = weekNumber();
+      await seed(async (db) => {
+        const entry = (uid, n, x, daysOld) => setDoc(weekDoc(db, uid, week), { name: `Royal ${uid}`, born: born(daysOld), n, x });
+        await entry("old", 4, 2, 100);
+        await entry("young", 4, 2, 10);
+        await entry("busy", 6, 1, 50);
+        await entry("idle", 1, 0, 50);
+      });
+      expect(await fetchWeekPodium(anon(), CAMPUS, week)).toEqual({ s: ["busy", "old", "young"], e: ["old", "young", "busy"] });
+      expect(await fetchWeekPodium(anon(), CAMPUS, week - 1)).toEqual({ s: [], e: [] }); // an empty week still gets a (empty) podium
+    });
   });
 });

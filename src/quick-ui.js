@@ -11,13 +11,14 @@ import { QUICK_PER_DAY, quickUsage } from "./profile.js";
 import { overallScore } from "./scoring.js";
 import { tierBadge, tierTag } from "./tiers-ui.js";
 import { state, subscribe } from "./store.js";
+import { ThroningCooldownError } from "./throning-limit.js";
 
 const FLOOR_PENALTY_M = 12; // same "nearby" ranking as the list: one floor away counts as 12 m
 const NEARBY_ROWS = 8;
 const SEARCH_ROWS = 30;
 
-export function createQuickUI({ onRate }) {
-  let step = "pick"; // "pick" | "confirm" | "done"
+export function createQuickUI({ onRate, onCelebrate, onThroningBlocked }) {
+  let step = "pick"; // "pick" | "confirm"
   let query = "";
   let chosen = null;
   let busy = false;
@@ -74,21 +75,6 @@ export function createQuickUI({ onRate }) {
   function render() {
     const { left } = quickUsage(state.profile);
 
-    if (step === "done") {
-      replaceChildren(
-        card,
-        h("div", { class: "modal-head" }, h("h2", null, "Audience recorded 🚽"), closeBtn()),
-        h("p", { class: "note" }, h("strong", null, `+1 at ${toiletTitle(chosen)}`), ` · ${leftText(left)}`),
-        h(
-          "div",
-          { class: "btn-row" },
-          h("button", { class: "btn primary", type: "button", onclick: () => { close(); onRate(chosen); } }, "Pass your verdict"),
-          h("button", { class: "btn ghost", type: "button", onclick: close }, "Done"),
-        ),
-      );
-      return;
-    }
-
     if (step === "confirm") {
       replaceChildren(
         card,
@@ -143,22 +129,32 @@ export function createQuickUI({ onRate }) {
 
   async function confirm() {
     if (busy) return;
+    const loggedToilet = chosen;
+    let recorded = false;
     busy = true;
     render();
     try {
-      await quickVisit(chosen.id);
-      step = "done";
+      await quickVisit(loggedToilet.id);
+      recorded = true;
+      close();
     } catch (e) {
       step = "pick";
       if (e instanceof QuickLimitError) toast("You've held today's 3 audiences. Back tomorrow 👑", 4500);
+      else if (e instanceof ThroningCooldownError) onThroningBlocked(e.remainingMs);
       else {
         console.warn(e);
         toast(errorMessage(e));
       }
     } finally {
       busy = false;
-      render();
+      if (!recorded) render();
     }
+    if (recorded) onCelebrate({
+      kind: "session",
+      toilet: loggedToilet,
+      detail: leftText(quickUsage(state.profile).left),
+      onReview: () => onRate(loggedToilet),
+    });
   }
 
   // The badge on the button shows how many are left today.

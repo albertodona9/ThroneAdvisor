@@ -7,13 +7,14 @@ _TODO_
 [X] Add possibility to install webapp
 [X] Add info page with credits for developers
 [X] Make kings/queens tab with users stats
-[ ] Make app a bit "less nice" with poops ratings based on the overalls (stinky, medium, excellent etc.), add colors and decorations
+[X] Make app a bit "less nice" with poops ratings based on the overalls (stinky, medium, excellent etc.), add colors and decorations
 [X] trophies for reviewers, add weekly leaderboards and yearly throne kings and queens
-[ ] Add the thropies room for each user with all time streak number and with badges for the weekly all time
+[X] Add the thropies room for each user with all time streak number and with badges for the weekly all time
 I am thinking of something like every season gets its own badge (based on crops or something like that) and the frame is either gold, silver or bronze based on the position.
 [X] login options and cache storing on the phone so no need to login each time
-[ ] Personal Heat Map of campus
-[ ] Ironic message like "congrats on your throning" when registering a throne session, with some confetti and trumpets sounds and drapes
+[ ] Personal Heat (Kingdom) Map of campus
+[X] Ironic message like "congrats on your throning" when registering a throne session, with some confetti and trumpets sounds and drapes
+[ ] battles of the families, each player can play alone or join a family, and start conquering campus by being the last one to have pooped in a bathroom
 
 Find a free toilet on campus and rate how nice it is to sit in. Built for DTU Lyngby on top of
 [MazeMap](https://www.mazemap.com), hosted on Firebase.
@@ -30,8 +31,20 @@ Find a free toilet on campus and rate how nice it is to sit in. Built for DTU Ly
   phone. Reviews show the username (a generated nickname unless they chose one), never the Google name or email.
 - **Profiles.** The top-right button opens the account window, where "Personalize profile" sets a username and an avatar. The **Me** tab in
   the bottom sheet shows your numbers (reviews, visits, toilets, average score) and every review you wrote.
+  Choose from 16 Magnific-illustrated fictional kings and queens with varied skin tones and European-, African-, East Asian- and
+  Aztec-inspired regalia. Portraits are independent of your leaderboard title. Pick a **Pearl**, **Jade**, **Amethyst** or **Rose** frame,
+  or leave the portrait unframed. Your saved frame appears on your account, My court and reviews; leaderboard podiums temporarily
+  replace it with **gold**, **silver** or **bronze** for places 1–3, without changing your choice.
 - **"I just throned" 🚽.** The round button at the bottom right logs a quick visit: pick the toilet you used (closest first, or search),
   confirm, and it adds one to that toilet's usage counter and to your profile. At most **3 a day** per user; the badge shows how many are left.
+- **Hear ye, hear ye!** Successful sessions get a humorous royal congratulations pop-up with side trumpets and a shower of gold stars
+  and parchment confetti. A review that counts a visit celebrates both; review-only submissions and amendments celebrate the decree
+  instead, without claiming another visit. Following a quick log with "Pass your verdict" does not count that sitting twice.
+  Reduced-motion settings disable the animated confetti and trumpet entrance.
+- **Court musicians.** The supplied `medieval_background.mp3` loops quietly after the first tap or key press (browsers block unsolicited
+  audio). `tadaa.mp3` plays once per celebration. The **♪ On/Off** button mutes both and remembers your choice on this browser.
+  Music pauses when the tab is hidden and resumes when you return; interrupted fanfares are not replayed.
+  Both tracks are bundled locally, with no external music service.
 - **Credits.** Tapping the ThroneAdvisor logo opens a pop-up with who made it and a link to this repository.
 - **Rating tiers.** A toilet's overall score decides its tier, which has a name and a picture shown in every list and in the detail view:
   up to 2.0 **Peasant's Pot** · 2.1-4.0 **Commoner's Loo** · 4.1-6.0 **Noble's Rest** · 6.1-8.0 **Highness's Throne** · 8.1-10 **The King's Loo**.
@@ -44,8 +57,16 @@ Find a free toilet on campus and rate how nice it is to sit in. Built for DTU Ly
   boards the **oldest** royal wins, in the all-time boards the **youngest**, so nobody stays on top forever. Below each section your own
   numbers are shown. In "Personalize profile" you choose to be a **King** or a **Queen** (or stay a plain "Royal"). Each royal also has a
   **birth date**: the day their account was created, shown in the account window and on the Me tab (it is also what breaks ties).
+  Tap anyone on a podium to open their **royal profile** window, laid out like My court: portrait, name, title, birth date, short
+  description, student number (only if they published it), and their sessions and thrones this week and all time.
+  In "Personalize profile" you can add a short one-line **description** (up to 80 characters), a **student number**
+  (4-12 letters or digits) and a **class** year, shown as a "Class of 27" badge in a column at the right of the profile header.
+  All show on your own My court (the student number appears right after your name). The description and class are public; the student
+  number is private unless you tick "Show it on my public profile".
 - **Swipe the bottom sheet.** Drag the list up to expand it and down to collapse it (it follows your finger and snaps; a quick flick decides the
   direction). It never fights with scrolling the list. Tapping the handle still works.
+- **Underline tabs.** The sheet's sections are serif labels resting on a thin gold rule; the selected one is burgundy with a
+  burgundy-and-gold underline. On narrow screens the tabs scroll horizontally.
 
 ## Run it locally
 
@@ -78,6 +99,8 @@ Firestore bills per document read, so the whole design is about reading few docu
 | Reviews                                                | `campuses/{campus}/toilets/{id}/reviews/{uid}`                | ≤ 10 reads, only when someone opens that toilet (cached for the session)           |
 | A user's profile: name, avatar, own reviews and visits | `users/{uid}` (private to its owner)                          | 1 read per session, only for users who have an account/session                     |
 | Royals boards (4 top-3 lists: weekly and all-time)     | `campuses/{campus}/royals/{uid}`, `weeks/{week}/royals/{uid}` | 12 reads (+2 for your own two entries), only when the tab is opened, cached 20 min |
+| A royal's profile window (tap a podium avatar)         | the same two documents for that one user                      | 2 reads, only on tap, cached 5 min per user                                        |
+| Trophy room (streaks, season medals, verdict trophies) | fields on the royal record, plus `days/{day}`, `podiums/{week}` | once a day per phone, see **Trophies** below                                       |
 
 Opening the app costs **2 reads** (**3** for a returning user, whose profile is loaded too), regardless of how many toilets exist. While the tab is visible it
 re-reads `live` every 2 min and `stats` every 5 min (see `src/config.js`; `live` is polled slowly because few people check in
@@ -89,7 +112,13 @@ There are no real-time listeners on purpose: a listener is billed one read per c
 `vs`: their visits per toilet), which is what the "Me" tab shows without reading any other document. It is written in the same batch
 as the review or visit it records. Only the username and avatar are ever public, and only by being copied onto the user's review
 documents (`by`, `em`), so other people's names on a toilet's reviews cost no extra reads. The rules constrain both (3-20
-letters/digits/spaces/`_.-`, 16 allowed avatars). Renaming rewrites the user's own reviews in one batch; the rules allow that
+letters/digits/spaces/`_.-`, 16 allowed avatars and 4 optional frames). The existing `emoji` / `em` values now identify illustrated
+portraits, so old selections remain valid without a migration. The optional `frame` on a profile is copied as `fr` onto reviews.
+The two Magnific sprite sheets are bundled from `src/assets/`, with no runtime image-service requests.
+The optional `bio` (one line, ≤ 80 characters), `cy` class year (2000-2099) and `sn` student number (4-12 letters/digits) live in the private profile too; `snPub`
+says whether the number may be public. The royal record (`campuses/{campus}/royals/{uid}`) carries a copy of `bio`, `cy` and, only with `snPub`,
+of `sn`, written in the batches that already write the profile or count a session, so they cost no extra writes.
+Renaming or changing a portrait/frame rewrites the user's own reviews in one batch; the rules allow that
 without touching scores or stats. Reviews written before profiles existed aren't in `rv`, so they don't appear in "Me" until the
 review is edited.
 
@@ -121,6 +150,26 @@ tie-break: weekly boards sort `born` ascending (oldest first), all-time boards d
 aren't on a podium. These queries need **four composite indexes** (`royals`, collection-group, fields `n`/`x` descending + `born` ascending/descending),
 declared in `firestore.indexes.json`; `npm run deploy` creates them, and the tab shows an error until they have finished building in production
 (the emulator doesn't need them).
+
+**Trophies.** Each royal record also carries a trophy shelf, shown on "My court" and on the public royal profile (no extra reads: it is the same
+document). There is no server, so the owner's own phone keeps it up to date, at most once a day (a note in `localStorage`), from public data. Code: `src/trophies.js`
+(the logic, tested), `src/trophy-check.js` (the daily check), `src/trophy-shelf.js` (the shelves, with the art drawn as small SVGs; swap the three draw functions for
+painted images when there are some).
+- **Verdict trophies** (`lt` = 10 / 50 / 100): the best like count among your own reviews. The check reads your reviews (one read per reviewed toilet) and stops for good once
+  you have the top one. A milestone is awarded at the next daily check, not the moment of the like, and likes taken back before it are missed.
+- **Streaks** (`st` = {s, e, d}: days in a row on the all-time sessions / explorers podium, and the last day counted). `campuses/{campus}/days/{yyyymmdd}` = `{d, s: [uid], e: [uid]}`
+  is the "has today been checked yet" flag: the first phone with a royal record that opens the app on a new day reads the two all-time boards (6 reads) and creates it. The rules
+  only accept a create for today, so a second phone's create is refused and it just reads the snapshot instead. Everyone then moves their own streak from the snapshots newer
+  than their last counted day: in the list = +1, not in it = back to 0. A day nobody opened the app has no snapshot and just pauses the streak. A newcomer starts from today.
+  Streaks are public like the rest of the record, and so are the snapshots, so anyone can recompute them. About 6 reads a day for the whole campus plus one query per user.
+- **Season medals** (`wq` = {"2026Q4": {s1: 2, e3: 1}}, `wl` = last week counted): a gold / silver / bronze medal for each finished week you stood on a weekly podium, grouped by
+  quarter (the one the week's Monday falls in) and shown as one medal per week won (no multiplier). `campuses/{campus}/podiums/{week}` = `{w, s, e}` is the frozen podium of a finished
+  week, created once by the first phone that needs it (6 reads, only for weeks before the running one; a finished week can't change, so the result is exact even if it is made
+  late). A phone catches up on the weeks since `wl` (at most 60), starting no earlier than `ROYALS_FIRST_WEEK` in `src/config.js`. About 6 reads per finished week for the whole campus, plus one query per user per week.
+- **Trust.** The rules only check the *shape* of the shelf (valid tiers, non-negative numbers, one board per snapshot, at most three names) and that only the owner writes it, plus that
+  snapshots are created once and for the right day / a finished week. They cannot check that the numbers are true, so someone with a modified app could write any shelf. That is
+  accepted here (like App Check, it is a campus app); `n`, `x` and the boards themselves stay protected as before. A user without a royal record (no counted visit yet) has no shelf.
+- The earlier comment frames in the review list (10 / 25 / 50 likes) are separate from the 10 / 50 / 100 verdict trophies.
 
 **Quick logs and the daily limit.** A quick log is one batch of two writes (the toilet's counter in `stats`, plus your profile), so it costs
 nothing beyond a normal review. The limit of 3 a day is kept in your own profile as `q: {d: day, n: used}` and **enforced by the security
@@ -267,6 +316,7 @@ src/
   cache.js, install.js   phone copy of documents (saves reads); "Install app" chip
   credits.js, quick-ui.js   the credits pop-up; the 🚽 "I just throned" button and picker
   tiers.js, tiers-ui.js   the five rating tiers (ranges, names, colours, pictures) and the badge shown in rows
+  trophies.js, trophy-check.js, trophy-shelf.js   the trophy room: logic, the daily check against Firestore, and the shelves
   sheet-swipe.js   swipe gestures for the bottom sheet
   royals.js   loads the four Royals boards and keeps your own entries (cached on the phone)
   list.js (Near you / Top rated / Me), detail.js, dom.js, style.css

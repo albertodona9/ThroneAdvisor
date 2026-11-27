@@ -1,8 +1,9 @@
 // Account button (top right), the account modal, and its profile personalization view.
 import { errorMessage, loadProfile, updateProfile } from "./actions.js";
 import { authErrorMessage, logOut, saveWithGoogle, signInToExisting } from "./account.js";
+import { AVATARS, FRAMES, avatarBadge } from "./avatars.js";
 import { h, replaceChildren, toast } from "./dom.js";
-import { EMOJIS, TITLES, displayName, formatBorn, nameProblem, titleIcon, titleLabel } from "./profile.js";
+import { BIO_MAX, TITLES, bioProblem, classYearOptions, displayName, formatBorn, nameProblem, studentNumberProblem, titleIcon, titleLabel } from "./profile.js";
 import { state, subscribe } from "./store.js";
 
 const GOOGLE_G = `<svg viewBox="0 0 48 48" width="20" height="20" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.6 5.9c4.5-4.1 7-10.2 7-17.6z"/><path fill="#FBBC05" d="M10.5 28.7c-.5-1.4-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.4 0 20.1 0 24s.9 7.6 2.6 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.6-5.9c-2.1 1.4-4.9 2.3-8.3 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>`;
@@ -19,7 +20,7 @@ function googleButton(label, onclick, disabled) {
 export function createAccountUI() {
   let busy = false;
   let view = "main"; // "main" | "personalize"
-  let draft = null; // {name, emoji} while personalizing
+  let draft = null; // {name, emoji, title, frame} while personalizing
 
   const avatar = h("button", { class: "account-btn", type: "button", "aria-label": "Account", onclick: () => open() });
   const card = h("div", { class: "modal-card", role: "dialog", "aria-modal": "true", "aria-label": "Account" });
@@ -147,7 +148,16 @@ export function createAccountUI() {
 
   function renderPersonalize() {
     const current = state.profile ?? { name: null, emoji: null };
-    draft ??= { name: current.name ?? "", emoji: current.emoji ?? null, title: current.title ?? null };
+    draft ??= {
+      name: current.name ?? "",
+      emoji: current.emoji ?? null,
+      title: current.title ?? null,
+      frame: current.frame ?? null,
+      bio: current.bio ?? "",
+      sn: current.sn ?? "",
+      cy: current.cy ?? null,
+      snPub: !!current.snPub,
+    };
     const generated = displayName(state.uid ?? "", null);
 
     const preview = h("p", { class: "preview" });
@@ -167,6 +177,57 @@ export function createAccountUI() {
     });
     input.value = draft.name;
 
+    const bioNote = h("p", { class: "hint", "aria-live": "polite" });
+    const bioInput = h("input", {
+      type: "text",
+      maxlength: BIO_MAX,
+      autocomplete: "off",
+      placeholder: "A line about you",
+      "aria-label": "Short description",
+      oninput: (e) => {
+        draft.bio = e.target.value;
+        refresh();
+      },
+    });
+    bioInput.value = draft.bio;
+
+    const snProblemEl = h("p", { class: "problem", "aria-live": "polite" });
+    const snInput = h("input", {
+      type: "text",
+      maxlength: 12,
+      autocomplete: "off",
+      spellcheck: "false",
+      placeholder: "s123456",
+      "aria-label": "Student number",
+      oninput: (e) => {
+        draft.sn = e.target.value;
+        refresh();
+      },
+    });
+    snInput.value = draft.sn;
+    const snPubInput = h("input", {
+      type: "checkbox",
+      onchange: (e) => {
+        draft.snPub = e.target.checked;
+        refresh();
+      },
+    });
+    snPubInput.checked = draft.snPub;
+
+    const cyInput = h(
+      "select",
+      {
+        "aria-label": "Class of",
+        onchange: (e) => {
+          draft.cy = e.target.value ? Number(e.target.value) : null;
+          refresh();
+        },
+      },
+      h("option", { value: "" }, "Not shown"),
+      [...new Set([...classYearOptions(), ...(draft.cy ? [draft.cy] : [])])].sort().map((y) => h("option", { value: String(y) }, `Class of ${y}`)),
+    );
+    cyInput.value = draft.cy ? String(draft.cy) : "";
+
     const titleRow = h(
       "div",
       { class: "title-picker", role: "group", "aria-label": "Title" },
@@ -176,7 +237,7 @@ export function createAccountUI() {
           {
             class: `title-opt ${draft.title === key ? "picked" : ""}`,
             type: "button",
-            "aria-pressed": draft.title === key,
+            "aria-pressed": String(draft.title === key),
             "data-title": key,
             onclick: () => {
               draft.title = draft.title === key ? null : key; // tap again to go back to plain "Royal"
@@ -195,47 +256,102 @@ export function createAccountUI() {
 
     const grid = h(
       "div",
-      { class: "emoji-grid", role: "group", "aria-label": "Avatar" },
-      EMOJIS.map((em) =>
+      { class: "avatar-grid", role: "group", "aria-label": "Avatar" },
+      AVATARS.map((a) =>
         h(
           "button",
           {
-            class: `emoji ${draft.emoji === em ? "picked" : ""}`,
+            class: `avatar-option ${draft.emoji === a.id ? "picked" : ""}`,
             type: "button",
-            "aria-pressed": draft.emoji === em,
+            "aria-label": a.name,
+            "aria-pressed": String(draft.emoji === a.id),
+            "data-avatar": a.id,
             onclick: () => {
-              draft.emoji = draft.emoji === em ? null : em; // tap again to remove
+              draft.emoji = draft.emoji === a.id ? null : a.id;
               [...grid.children].forEach((b) => {
-                const on = b.textContent === draft.emoji;
+                const on = b.dataset.avatar === draft.emoji;
                 b.classList.toggle("picked", on);
                 b.setAttribute("aria-pressed", String(on));
               });
               refresh();
             },
           },
-          em,
+          avatarBadge({ emoji: a.id }),
         ),
       ),
+    );
+
+    const frameGrid = h(
+      "div",
+      { class: "frame-grid", role: "group", "aria-label": "Avatar frame" },
+      FRAMES.map((f) => h(
+        "button",
+        {
+          class: `frame-option ${draft.frame === f.id ? "picked" : ""}`,
+          type: "button",
+          "aria-label": f.id ? `${f.name} frame` : f.name,
+          "aria-pressed": String(draft.frame === f.id),
+          "data-frame": f.id ?? "",
+          onclick: () => {
+            draft.frame = f.id;
+            [...frameGrid.children].forEach((b) => {
+              const on = b.dataset.frame === (draft.frame ?? "");
+              b.classList.toggle("picked", on);
+              b.setAttribute("aria-pressed", String(on));
+            });
+            refresh();
+          },
+        },
+        avatarBadge({ ...draft, frame: f.id }),
+        h("span", null, f.name),
+      )),
     );
 
     function refresh() {
       const bad = nameProblem(draft.name);
       problem.textContent = bad ?? "";
+      const badBio = bioProblem(draft.bio);
+      bioNote.textContent = badBio ?? `${[...draft.bio.trim()].length}/${BIO_MAX}`;
+      bioNote.className = badBio ? "problem" : "hint";
+      const badSn = studentNumberProblem(draft.sn);
+      snProblemEl.textContent = badSn ?? "";
+      snPubInput.disabled = !draft.sn.trim();
       const shown = draft.name.trim() || generated;
-      replaceChildren(preview, "Your verdicts will be signed ", h("strong", null, `${draft.emoji ? draft.emoji + " " : ""}${shown}`), ` · ${titleLabel(draft.title)} on the leaderboard`);
-      const changed = (draft.name.trim() || null) !== (current.name ?? null) || (draft.emoji ?? null) !== (current.emoji ?? null) || (draft.title ?? null) !== (current.title ?? null);
-      saveBtn.disabled = busy || !!bad || !changed;
+      const shownProfile = { ...draft, photoURL: state.account?.anonymous ? null : state.account?.photoURL };
+      replaceChildren(preview, avatarBadge(shownProfile, { size: "big" }), h("strong", null, shown), h("span", null, `${titleLabel(draft.title)} · Your verdicts are signed with this profile`));
+      [...frameGrid.children].forEach((b) => b.replaceChild(avatarBadge({ ...shownProfile, frame: b.dataset.frame || null }), b.firstChild));
+      const clean = (v) => (v ?? "").trim() || null;
+      const changed =
+        (draft.name.trim() || null) !== (current.name ?? null) ||
+        (draft.emoji ?? null) !== (current.emoji ?? null) ||
+        (draft.title ?? null) !== (current.title ?? null) ||
+        (draft.frame ?? null) !== (current.frame ?? null) ||
+        clean(draft.bio) !== clean(current.bio) ||
+        clean(draft.sn) !== clean(current.sn) ||
+        (draft.cy ?? null) !== (current.cy ?? null) ||
+        (!!clean(draft.sn) && draft.snPub) !== !!current.snPub;
+      saveBtn.disabled = busy || !!bad || !!badBio || !!badSn || !changed;
     }
 
     function onSave() {
       run(
         async () => {
-          await updateProfile({ name: draft.name.trim() || null, emoji: draft.emoji, title: draft.title });
+          const sn = draft.sn.trim() || null;
+          await updateProfile({
+            name: draft.name.trim() || null,
+            emoji: draft.emoji,
+            title: draft.title,
+            frame: draft.frame,
+            bio: draft.bio.trim() || null,
+            cy: draft.cy ?? null,
+            sn,
+            snPub: !!sn && draft.snPub,
+          });
           toast("Decree sealed ✓");
           view = "main";
           draft = null;
         },
-        (e) => (e?.code === "permission-denied" ? "That username isn't allowed. Try another one." : errorMessage(e)),
+        (e) => (e?.code === "permission-denied" ? "Couldn't save this profile. Check your selections and try again." : errorMessage(e)),
       );
     }
 
@@ -251,7 +367,17 @@ export function createAccountUI() {
       h("label", { class: "field" }, h("span", null, "Username"), input, problem),
       h("button", { class: "linklike", type: "button", onclick: () => ((draft.name = ""), (input.value = ""), refresh()) }, "Use my royal name"),
       h("div", { class: "field" }, h("span", null, "Title"), titleRow, h("span", { class: "hint" }, "Shown on the Royals leaderboard. Tap again to go back to plain “Royal”.")),
-      h("div", { class: "field" }, h("span", null, "Crest"), grid),
+      h("label", { class: "field" }, h("span", null, "About you"), bioInput, bioNote),
+      h("label", { class: "field" }, h("span", null, "Class"), cyInput, h("span", { class: "hint" }, "Optional. Shown as a “Class of” badge on your profile.")),
+      h(
+        "div",
+        { class: "field" },
+        h("label", { class: "field" }, h("span", null, "Student number"), snInput, snProblemEl),
+        h("label", { class: "check" }, snPubInput, h("span", null, "Show it on my public profile")),
+        h("span", { class: "hint" }, "Always visible to you in My court. Anyone who opens your profile from the leaderboard can see it only if you tick this."),
+      ),
+      h("div", { class: "field" }, h("span", null, "Royal portrait"), grid, h("span", { class: "hint" }, "Fictional royals in culturally inspired regalia. Tap your selection again to use the default.")),
+      h("div", { class: "field" }, h("span", null, "Portrait frame"), frameGrid, h("span", { class: "hint" }, "Your choice appears on your profile and verdicts. Podiums use gold, silver and bronze instead.")),
       preview,
       saveBtn,
     );
@@ -262,8 +388,7 @@ export function createAccountUI() {
 
   const sync = () => {
     const a = state.account;
-    const em = state.profile?.emoji;
-    replaceChildren(avatar, em ? h("span", { class: "emoji-avatar" }, em) : a && !a.anonymous && a.photoURL ? avatarImage(a, "small") : "👤");
+    replaceChildren(avatar, avatarFor(a, "small"));
     avatar.classList.toggle("needs-save", !!a?.anonymous); // dot: reviews not saved to an account yet
     if (!overlay.hidden && !busy && view === "main") render();
   };
@@ -274,17 +399,9 @@ export function createAccountUI() {
   return { button: avatar, open };
 }
 
-/** Big/small avatar: the chosen emoji, else the Google photo, else an initial. */
+/** Chosen portrait, else the Google photo or a default royal, with the saved frame. */
 function avatarFor(account, size) {
-  const em = state.profile?.emoji;
-  if (em) return h("span", { class: `avatar ${size} initial` }, em);
-  return avatarImage(account, size);
-}
-
-function avatarImage(account, size) {
-  return account.photoURL
-    ? h("img", { class: `avatar ${size}`, src: account.photoURL, alt: "", referrerpolicy: "no-referrer" })
-    : h("span", { class: `avatar ${size} initial` }, (account.name ?? "?").slice(0, 1).toUpperCase());
+  return avatarBadge({ ...state.profile, photoURL: account?.anonymous ? null : account?.photoURL }, { size });
 }
 
 /** Whether to nudge an anonymous user to save their account (snoozed for a week after "Later"). */

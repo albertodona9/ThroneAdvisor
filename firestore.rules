@@ -55,8 +55,8 @@ service cloud.firestore {
         return v is int && v >= 1 && v <= 10;
       }
 
-      // ---- stats: { t: { <id>: {n, p, c, k, v} }, ref, at } ----------------
-      // n = reviews, p/c/k = sums of privacy/cleanliness/comfort scores, v = visits
+      // ---- stats: { t: { <id>: {n, p, c, k, v, l?} }, ref, at } ----------------
+      // n = reviews, p/c/k = score sums, v = visits, l = latest public claimant
 
       match /meta/stats {
         allow get: if true;
@@ -75,7 +75,7 @@ service cloud.firestore {
           && d.keys().hasOnly(['t', 'ref', 'at'])
           && d.at == request.time
           && d.t.diff(resource.data.t).affectedKeys().hasOnly([id])
-          && d.t[id].keys().hasOnly(['n', 'p', 'c', 'k', 'v'])
+          && d.t[id].keys().hasOnly(['n', 'p', 'c', 'k', 'v', 'l'])
           && d.t[id].n is int && d.t[id].p is int && d.t[id].c is int
           && d.t[id].k is int && d.t[id].v is int
           && (reviewBacksStats(id, b, d.t[id]) || visitBacksStats(id, b, d.t[id]) || quickBacksStats(id, b, d.t[id]));
@@ -92,6 +92,7 @@ service cloud.firestore {
         let used = ('q' in before && before.q.d == today) ? before.q.n : 0;
         return a.v == b.v + 1
           && a.n == b.n && a.p == b.p && a.c == b.c && a.k == b.k
+          && claimBacksVisit(b, a)
           && 'q' in after
           && after.q.d == today
           && after.q.n == used + 1
@@ -106,7 +107,8 @@ service cloud.firestore {
         let old = had ? get(path).data : {'p': 0, 'c': 0, 'k': 0};
         let r = getAfter(path).data;
         return r.updatedAt == request.time
-          && (a.v == b.v || (a.v == b.v + 1 && !had)) // only a NEW review can also count a visit, not a later edit
+          && ((a.v == b.v && a.get('l', null) == b.get('l', null))
+              || (a.v == b.v + 1 && !had && claimBacksVisit(b, a))) // only a NEW review can also count a visit
           && a.n == b.n + (had ? 0 : 1)
           && a.p == b.p + r.p - old.p
           && a.c == b.c + r.c - old.c
@@ -119,11 +121,30 @@ service cloud.firestore {
         let liveAfter = getAfter(livePath()).data;
         return a.v == b.v + 1
           && a.n == b.n && a.p == b.p && a.c == b.c && a.k == b.k
+          && claimBacksVisit(b, a)
           && id in occ
           && occ[id].u == request.auth.uid
           && request.time > occ[id].s + duration.value(20, 's')
           && !(id in liveAfter.occ)
           && liveAfter.at == request.time;
+      }
+
+      // New clients attach the claimant in the same stats write. Old cached clients may omit it.
+      function claimBacksVisit(before, after) {
+        let claim = after.get('l', null);
+        return claim == before.get('l', null) || validNewClaim(before, claim);
+      }
+
+      function validNewClaim(before, claim) {
+        let profile = getAfter(userPath(request.auth.uid)).data;
+        return claim != before.get('l', null)
+          && claim is map
+          && claim.keys().hasOnly(['u', 'n', 'em', 'ti', 'at'])
+          && claim.u == request.auth.uid
+          && claim.at == request.time
+          && (!('n' in claim) || ('name' in profile && claim.n == profile.name && validName(claim.n)))
+          && (!('em' in claim) || ('emoji' in profile && claim.em == profile.emoji && allowedEmoji(claim.em)))
+          && (!('ti' in claim) || ('title' in profile && claim.ti == profile.title && claim.ti in ['king', 'queen']));
       }
 
       // ---- live: { occ: { <id>: {u, s, d} }, ref, at } ---------------------
@@ -232,7 +253,7 @@ service cloud.firestore {
       }
 
       // ---- royals: the public leaderboard record of each king / queen ---------------------
-      // campuses/{campus}/royals/{uid} = {name, emoji?, title?, born, n, ts?, x?}. n is the number of throning
+      // campuses/{campus}/royals/{uid} = {name, emoji?, title?, bio?, cy?, sn?, born, n, ts?, x?}. n is the number of throning
       // sessions: it can only grow by exactly one, and only in a batch that also counted one visit
       // (which the stats rules verify), so it can't be set to an arbitrary number.
       match /royals/{uid} {
@@ -344,12 +365,63 @@ service cloud.firestore {
       }
 
       function validRoyal(r) {
-        return r.keys().hasOnly(['name', 'emoji', 'title', 'born', 'n', 'ts', 'x'])
+        return r.keys().hasOnly(['name', 'emoji', 'title', 'bio', 'cy', 'sn', 'born', 'n', 'ts', 'x', 'st', 'lt', 'wl', 'wq'])
           && r.keys().hasAll(['name', 'born', 'n'])
           && validIdentity(r)
+          && (!('bio' in r) || validBio(r.bio))
+          && (!('cy' in r) || validClassYear(r.cy))
+          && (!('sn' in r) || validStudentNumber(r.sn))
           && r.born is timestamp && r.born <= request.time && r.born > timestamp.date(2024, 1, 1)
           && r.n is int && r.n >= 1
-          && validTried(r);
+          && validTried(r)
+          && validTrophies(r);
+      }
+
+      // ---- trophies: the shelf on the royal record -------------------------------------
+      // Kept by the owner's own phone, from public data (the daily and weekly snapshots below), so they are
+      // only shape-checked here: `st` = streaks on the all-time boards {s: sessions days, e: explorers days,
+      // d: last snapshot day counted}, `lt` = best liked-review trophy (10 / 50 / 100 likes), `wl` = last
+      // finished week counted into `wq` = {"2026Q4": {s1: 2, e3: 1, ...}} (board s/e + place 1-3 -> weeks).
+      function validTrophies(r) {
+        return (!('st' in r) || (r.st is map && r.st.keys().hasOnly(['s', 'e', 'd'])
+              && r.st.keys().hasAll(['s', 'e', 'd'])
+              && r.st.s is int && r.st.s >= 0 && r.st.s <= 100000
+              && r.st.e is int && r.st.e >= 0 && r.st.e <= 100000
+              && r.st.d is int && r.st.d >= 0 && r.st.d < 21000000))
+          && (!('lt' in r) || r.lt in [10, 50, 100])
+          && (!('wl' in r) || (r.wl is int && r.wl >= 0 && r.wl < 100000))
+          && (!('wq' in r) || (r.wq is map && r.wq.size() <= 40));
+      }
+
+      // ---- daily and weekly snapshots: who stood on the all-time podium on a day / on the weekly podium of a week ----
+      // One document each, created once by whichever phone gets there first (a create on an existing
+      // document is an update, which is refused), then never changed. Phones read them to move their own
+      // streak and season badges, so the boards are only read once per day / per finished week.
+      // The names inside are not checked: this is a trust-the-players feature (see the README).
+      match /days/{day} {
+        allow get: if true;
+        allow list: if request.query.limit <= 62;
+        allow create: if signedIn() && validDay(day, request.resource.data);
+      }
+      match /podiums/{week} {
+        allow get: if true;
+        allow list: if request.query.limit <= 60;
+        allow create: if signedIn() && validPodium(week, request.resource.data);
+      }
+
+      function validTop(l) {
+        return l is list && l.size() <= 3;
+      }
+      function validDay(id, r) {
+        return r.keys().hasOnly(['d', 's', 'e']) && r.keys().hasAll(['d', 's', 'e'])
+          && r.d is int && r.d == dayNumber(request.time) && id == string(r.d)
+          && validTop(r.s) && validTop(r.e);
+      }
+      // Only finished weeks: the running week is still moving.
+      function validPodium(id, r) {
+        return r.keys().hasOnly(['w', 's', 'e']) && r.keys().hasAll(['w', 's', 'e'])
+          && r.w is int && r.w >= 1 && r.w < weekNumber(request.time) && id == string(r.w)
+          && validTop(r.s) && validTop(r.e);
       }
 
       // This same batch counted exactly one visit on one toilet in the campus stats.
@@ -361,7 +433,7 @@ service cloud.firestore {
       }
 
       function validReview(r) {
-        return r.keys().hasOnly(['p', 'c', 'k', 'text', 'by', 'em', 'lk', 'createdAt', 'updatedAt'])
+        return r.keys().hasOnly(['p', 'c', 'k', 'text', 'by', 'em', 'fr', 'lk', 'createdAt', 'updatedAt'])
           && (!('lk' in r) || (r.lk is int && r.lk >= 0))
           && r.keys().hasAll(['p', 'c', 'k', 'createdAt', 'updatedAt'])
           && isScore(r.p) && isScore(r.c) && isScore(r.k)
@@ -370,9 +442,9 @@ service cloud.firestore {
           && validDisplay(r);
       }
 
-      // Only `by` / `em` differ from what is stored, and they are valid.
+      // Only the public name, portrait and frame differ from what is stored, and they are valid.
       function validRename(r) {
-        return r.diff(resource.data).affectedKeys().hasOnly(['by', 'em']) && validDisplay(r);
+        return r.diff(resource.data).affectedKeys().hasOnly(['by', 'em', 'fr']) && validDisplay(r);
       }
 
       function statsTouched(id) {
@@ -426,11 +498,16 @@ service cloud.firestore {
     }
 
     function validProfile(p) {
-      return p.keys().hasOnly(['name', 'emoji', 'title', 'rv', 'vs', 'q', 'lk'])
+      return p.keys().hasOnly(['name', 'emoji', 'title', 'frame', 'bio', 'cy', 'sn', 'snPub', 'rv', 'vs', 'q', 'lk'])
         && (!('title' in p) || p.title in ['king', 'queen'])
+        && (!('bio' in p) || validBio(p.bio))
+        && (!('cy' in p) || validClassYear(p.cy))
+        && (!('sn' in p) || validStudentNumber(p.sn))
+        && (!('snPub' in p) || (p.snPub == true && 'sn' in p))
         && (!('lk' in p) || (p.lk is map && p.lk.size() <= 2000))
         && (!('name' in p) || validName(p.name))
         && (!('emoji' in p) || allowedEmoji(p.emoji))
+        && (!('frame' in p) || allowedFrame(p.frame))
         && (!('rv' in p) || (p.rv is map && p.rv.size() <= 2000))
         && (!('vs' in p) || (p.vs is map && p.vs.size() <= 2000));
     }
@@ -440,12 +517,27 @@ service cloud.firestore {
     function validName(n) {
       return n is string && n.matches('^[\\p{L}\\p{N}][\\p{L}\\p{N} _.-]{1,18}[\\p{L}\\p{N}]$');
     }
+    // A short one-line description (1-80 characters) and a student number (4-12 letters or digits). They are
+    // copied to the public royal record, the student number only when its owner opted in (`snPub`).
+    function validBio(b) {
+      return b is string && b.matches('^[^\\n\\r]{1,80}$');
+    }
+    function validClassYear(y) {
+      return y is int && y >= 2000 && y <= 2099;
+    }
+    function validStudentNumber(s) {
+      return s is string && s.matches('^[A-Za-z0-9]{4,12}$');
+    }
     function allowedEmoji(e) {
       return e in ['🚽', '👑', '🧻', '🦆', '🐢', '🦉', '🐙', '🦄', '🌵', '🍕', '🎩', '🦊', '🐸', '☕', '🚀', '🦔'];
     }
+    function allowedFrame(f) {
+      return f in ['pearl', 'jade', 'amethyst', 'rose'];
+    }
     // The optional public name/avatar carried by a review.
     function validDisplay(r) {
-      return (!('by' in r) || validName(r.by)) && (!('em' in r) || allowedEmoji(r.em));
+      return (!('by' in r) || validName(r.by)) && (!('em' in r) || allowedEmoji(r.em))
+        && (!('fr' in r) || allowedFrame(r.fr));
     }
   }
 }

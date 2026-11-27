@@ -8,8 +8,22 @@ import { dayNumber, likeKey, quickUsage, royalIdentity } from "./profile.js";
 import { currentWeekEntry, invalidateRoyals, myRoyalState, recordSession } from "./royals.js";
 import { setCheckIn, state, update } from "./store.js";
 import { invalidateLive, invalidateStats } from "./sync.js";
+import { assertThroningAllowed, recordThroning, ThroningCooldownError } from "./throning-limit.js";
 
 const MIN_VISIT_MS = 25_000; // rules reject visits under 20 s; keep a margin for clock skew
+
+function publicClaim(uid, profile = state.profile) {
+  return {
+    u: uid,
+    ...(profile?.name ? { n: profile.name } : {}),
+    ...(profile?.emoji ? { em: profile.emoji } : {}),
+    ...(profile?.title ? { ti: profile.title } : {}),
+  };
+}
+
+function localClaim(uid, profile = state.profile) {
+  return { ...publicClaim(uid, profile), at: Date.now() };
+}
 
 export function errorMessage(e) {
   if (e?.code === "permission-denied") return "That was rejected by the server. Try again in a moment.";
@@ -28,7 +42,7 @@ export async function loadMyReview(id) {
   return review;
 }
 
-const EMPTY_PROFILE = () => ({ name: null, emoji: null, title: null, rv: {}, vs: {}, q: null, lk: {} });
+const EMPTY_PROFILE = () => ({ name: null, emoji: null, title: null, frame: null, rv: {}, vs: {}, q: null, lk: {} });
 
 /**
  * Runs a write that counts one visit at toilet `id`, giving it the leaderboard identity plus whether this toilet is
@@ -99,12 +113,12 @@ export async function loadProfile({ fresh = false } = {}) {
 }
 
 /** Save the chosen username / avatar (null = default) and carry it over to the user's reviews. */
-export async function updateProfile({ name, emoji, title = null }) {
+export async function updateProfile({ name, emoji, title = null, frame = null, bio = null, cy = null, sn = null, snPub = false }) {
   const uid = await ensureUser();
   update({ uid });
   const profile = await loadProfile({ fresh: true }); // another device may have added reviews
-  const next = { ...profile, name, emoji, title };
-  await saveProfile(db, CAMPUS.id, uid, { name, emoji, title }, Object.keys(profile.rv), currentRoyal(next));
+  const next = { ...profile, name, emoji, title, frame, bio, cy, sn, snPub: !!sn && snPub };
+  await saveProfile(db, CAMPUS.id, uid, { name, emoji, title, frame, bio, cy, sn, snPub: next.snPub }, Object.keys(profile.rv), currentRoyal(next));
   setProfile(next);
   invalidateRoyals();
 }
@@ -122,17 +136,29 @@ export async function startVisit(id) {
 /** Leave the toilet. Returns true if the visit was counted. */
 export async function endVisit(id, { cancel = false } = {}) {
   const elapsed = Date.now() - (state.checkIn?.at ?? 0);
-  const countVisit = !cancel && elapsed >= MIN_VISIT_MS;
+  let countVisit = !cancel && elapsed >= MIN_VISIT_MS;
+  let cooldownError = null;
+  if (countVisit) {
+    try {
+      assertThroningAllowed();
+    } catch (e) {
+      if (!(e instanceof ThroningCooldownError)) throw e;
+      cooldownError = e;
+      countVisit = false;
+    }
+  }
   try {
-    if (countVisit) await countedVisit(id, (royal) => checkOut(db, CAMPUS.id, id, { countVisit: true, uid: state.uid, royal }));
+    if (countVisit) await countedVisit(id, (royal) => checkOut(db, CAMPUS.id, id, { countVisit: true, uid: state.uid, royal, claim: publicClaim(state.uid) }));
     else await checkOut(db, CAMPUS.id, id, { countVisit: false, uid: state.uid });
   } catch (e) {
     // Our check-in expired and someone else took the toilet: nothing left to leave.
     if (e?.code !== "permission-denied") throw e;
+    console.warn("check-out no longer available; session not counted", e);
+    countVisit = false;
   }
   const { [id]: _gone, ...live } = state.live;
   const stats = { ...state.stats };
-  if (countVisit) stats[id] = { ...(stats[id] ?? { n: 0, p: 0, c: 0, k: 0, v: 0 }), v: (stats[id]?.v ?? 0) + 1 };
+  if (countVisit) stats[id] = { ...(stats[id] ?? { n: 0, p: 0, c: 0, k: 0, v: 0 }), v: (stats[id]?.v ?? 0) + 1, l: localClaim(state.uid) };
   update({ live, stats });
   invalidateLive(); // the phone's copies no longer match the server: read fresh next time
   if (countVisit) {
@@ -144,15 +170,18 @@ export async function endVisit(id, { cancel = false } = {}) {
     setProfile({ ...state.profile, vs });
   }
   setCheckIn(null);
+  if (cooldownError) throw cooldownError;
+  if (countVisit) recordThroning();
   return countVisit;
 }
 
 export async function submitReview(id, scores) {
+  if (scores.countVisit) assertThroningAllowed();
   const uid = await ensureUser();
   update({ uid });
   const previous = await loadMyReview(id);
   const profile = await loadProfile();
-  if (scores.countVisit) await countedVisit(id, (royal) => saveReview(db, CAMPUS.id, uid, id, scores, previous, profile, royal), profile);
+  if (scores.countVisit) await countedVisit(id, (royal) => saveReview(db, CAMPUS.id, uid, id, scores, previous, profile, royal, publicClaim(uid, profile)), profile);
   else await saveReview(db, CAMPUS.id, uid, id, scores, previous, profile, null);
 
   const prev = previous ?? { p: 0, c: 0, k: 0 };
@@ -167,6 +196,7 @@ export async function submitReview(id, scores) {
         c: e.c + scores.c - prev.c,
         k: e.k + scores.k - prev.k,
         v: e.v + (scores.countVisit ? 1 : 0),
+        ...(scores.countVisit ? { l: localClaim(uid, profile) } : {}),
       },
     },
   });
@@ -174,7 +204,16 @@ export async function submitReview(id, scores) {
   setProfile({ ...profile, rv: { ...profile.rv, [id]: { p: scores.p, c: scores.c, k: scores.k, at: Date.now() } }, vs });
   invalidateStats(); // so the next app open reads the new totals instead of a copy from before our review
   if (scores.countVisit) invalidateRoyals();
-  state.myReviews.set(id, { uid, p: scores.p, c: scores.c, k: scores.k, text: (scores.text ?? "").trim(), createdMs: previous?.createdMs ?? Date.now() });
+  state.myReviews.set(id, {
+    uid,
+    p: scores.p,
+    c: scores.c,
+    k: scores.k,
+    text: (scores.text ?? "").trim(),
+    likes: previous?.likes ?? 0,
+    createdMs: previous?.createdMs ?? Date.now(),
+  });
+  if (scores.countVisit) recordThroning();
 }
 
 /** Thrown when today's quick visits are used up (checked on the phone first, then by the rules). */
@@ -182,6 +221,7 @@ export class QuickLimitError extends Error {}
 
 /** "I just throned": add one visit at toilet `id` to its counter and to the user's profile. */
 export async function quickVisit(id) {
+  assertThroningAllowed();
   const uid = await ensureUser();
   update({ uid });
   const profile = await loadProfile();
@@ -189,7 +229,7 @@ export async function quickVisit(id) {
   if (left <= 0) throw new QuickLimitError();
   const day = dayNumber();
   try {
-    await countedVisit(id, (royal) => quickThrone(db, CAMPUS.id, uid, id, { used, day, royal }), profile);
+    await countedVisit(id, (royal) => quickThrone(db, CAMPUS.id, uid, id, { used, day, royal, claim: publicClaim(uid, profile) }), profile);
   } catch (e) {
     if (e?.code === "permission-denied") {
       // Most likely today's allowance was already used up on another phone: re-read it, so the
@@ -200,10 +240,11 @@ export async function quickVisit(id) {
     throw e;
   }
   const e = state.stats[id] ?? { n: 0, p: 0, c: 0, k: 0, v: 0 };
-  update({ stats: { ...state.stats, [id]: { ...e, v: e.v + 1 } } });
+  update({ stats: { ...state.stats, [id]: { ...e, v: e.v + 1, l: localClaim(uid, profile) } } });
   setProfile({ ...profile, q: { d: day, n: used + 1 }, vs: { ...profile.vs, [id]: (profile.vs[id] ?? 0) + 1 } });
   invalidateStats();
   invalidateRoyals();
+  recordThroning();
 }
 
 /** Has the signed-in user liked this review? (From their profile: no read.) */
