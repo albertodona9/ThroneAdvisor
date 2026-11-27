@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { metersBetween, spreadOverlaps } from "../src/layout.js";
+import { displayPosition, metersBetween, spreadAmount, spreadOverlaps } from "../src/layout.js";
 
 const at = (id, lng, lat, z = 1) => ({ id, lng, lat, z, b: "1", f: "S", n: id });
 const real = JSON.parse(readFileSync("src/data/toilets-dtu-lyngby.json", "utf8")).toilets;
@@ -57,5 +57,31 @@ describe("spreadOverlaps", () => {
 
   it("is deterministic", () => {
     expect(spreadOverlaps(real)).toEqual(spreadOverlaps(real));
+  });
+});
+
+describe("zoom-dependent spread", () => {
+  it("is fully spread zoomed out and on the true positions zoomed in", () => {
+    expect(spreadAmount(15)).toBe(1);
+    expect(spreadAmount(17.5)).toBe(1);
+    expect(spreadAmount(20)).toBe(0);
+    expect(spreadAmount(22)).toBe(0);
+  });
+
+  it("eases monotonically in between", () => {
+    let prev = 1;
+    for (let z = 17.5; z <= 20; z += 0.1) {
+      const a = spreadAmount(z);
+      expect(a).toBeLessThanOrEqual(prev);
+      prev = a;
+    }
+  });
+
+  it("places a bubble between its true and spread spots", () => {
+    const [t] = spreadOverlaps([at("a", 12.52, 55.786), at("b", 12.52, 55.786)]);
+    expect(displayPosition(t, 1)).toEqual([t.mlng, t.mlat]);
+    expect(displayPosition(t, 0)).toEqual([t.lng, t.lat]);
+    const [mx] = displayPosition(t, 0.5);
+    expect(mx).toBeCloseTo((t.lng + t.mlng) / 2, 9);
   });
 });

@@ -79,6 +79,23 @@ export function spreadOverlaps(toilets, { minSep = 4.2, maxMove = 8, iterations 
 
 const round6 = (n) => Math.round(n * 1e6) / 1e6;
 
+// The spread only exists to keep bubbles legible when they are big relative to the map. Zoomed
+// out it applies in full; by `TRUE_ZOOM` the bubbles are small relative to the rooms and sit on
+// the real positions.
+const FULL_SPREAD_ZOOM = 17.5;
+const TRUE_ZOOM = 20;
+
+/** 1 = fully spread, 0 = true positions; steps of 0.05 so the map isn't redrawn on every pixel of zoom. */
+export function spreadAmount(zoom) {
+  const t = Math.min(1, Math.max(0, (zoom - FULL_SPREAD_ZOOM) / (TRUE_ZOOM - FULL_SPREAD_ZOOM)));
+  return Math.round((1 - t) * 20) / 20;
+}
+
+/** Where to draw a toilet at a given spread amount: between its true spot and its spread spot. */
+export function displayPosition(t, amount) {
+  return [t.lng + (t.mlng - t.lng) * amount, t.lat + (t.mlat - t.lat) * amount];
+}
+
 /** Metres between two points; only used by tests, equirectangular is plenty at campus scale. */
 export function metersBetween(a, b, lat0 = a.lat) {
   const dx = (a.lng - b.lng) * M_PER_DEG_LAT * Math.cos((lat0 * Math.PI) / 180);

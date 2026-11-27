@@ -1,6 +1,7 @@
 // MazeMap integration: toilet bubbles (one GeoJSON source, filtered by floor), the user's
 // blue dot, and camera helpers. The bubbles are WebGL layers, so hundreds of them are cheap.
 import { CAMPUS } from "./config.js";
+import { displayPosition, spreadAmount } from "./layout.js";
 import { formatScore, overallScore, scoreColor } from "./scoring.js";
 import { occupancy, state } from "./store.js";
 
@@ -13,6 +14,8 @@ let blueDot;
 let ready = false;
 let pendingData = null;
 let pendingPosition = null; // a GPS fix can arrive before the map has finished loading
+let current = null; // the GeoJSON last handed to the source, so zooming can move its points
+let amount = 1; // how far the bubbles are spread right now (see spreadAmount)
 
 export function createMap({ onSelect, onDeselect, onFloorChange }) {
   map = new Mazemap.Map({
@@ -46,6 +49,7 @@ export function createMap({ onSelect, onDeselect, onFloorChange }) {
       const over = map.queryRenderedFeatures(e.point, { layers: HIT_LAYERS }).length > 0;
       map.getCanvas().style.cursor = over ? "pointer" : "";
     });
+    map.on("zoom", respread);
     map.on("zlevel", () => {
       applyFloor(map.zLevel);
       onFloorChange(map.zLevel);
@@ -137,11 +141,12 @@ function applyFloor(z) {
 /** Rebuild every bubble from the current stats + live occupancy. */
 export function renderToilets() {
   const now = Date.now();
+  amount = spreadAmount(map?.getZoom() ?? CAMPUS.zoom);
   const features = state.toilets.map((t) => {
     const score = overallScore(state.stats[t.id]);
     return {
       type: "Feature",
-      geometry: { type: "Point", coordinates: [t.mlng, t.mlat] },
+      geometry: { type: "Point", coordinates: displayPosition(t, amount) },
       properties: {
         id: t.id,
         z: t.z,
@@ -154,7 +159,19 @@ export function renderToilets() {
   setData({ type: "FeatureCollection", features });
 }
 
+/** Zooming in eases the bubbles from their spread spots back onto the real rooms. */
+function respread() {
+  const next = spreadAmount(map.getZoom());
+  if (next === amount || !current) return;
+  amount = next;
+  for (const f of current.features) {
+    f.geometry.coordinates = displayPosition(state.byId.get(f.properties.id), amount);
+  }
+  setData(current);
+}
+
 function setData(data) {
+  current = data;
   if (!ready) {
     pendingData = data;
     return;
@@ -184,9 +201,10 @@ export function setFloor(z) {
 export function focusToilet(t, { offset = [0, 0] } = {}) {
   if (!map) return;
   setFloor(t.z);
+  const zoom = Math.max(map.getZoom(), 18.5);
   map.flyTo({
-    center: [t.mlng, t.mlat],
-    zoom: Math.max(map.getZoom(), 18.5),
+    center: displayPosition(t, spreadAmount(zoom)), // where its bubble will be once we arrive
+    zoom,
     offset,
     duration: 700,
   });
